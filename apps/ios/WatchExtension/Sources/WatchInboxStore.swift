@@ -12,6 +12,32 @@ enum WatchPayloadType: String, Codable, Equatable {
     case execApprovalExpired = "watch.execApproval.expired"
     case execApprovalSnapshot = "watch.execApproval.snapshot"
     case execApprovalSnapshotRequest = "watch.execApproval.snapshotRequest"
+    case talkUtterance = "watch.talk.utterance"
+    case talkState = "watch.talk.state"
+    case talkReply = "watch.talk.reply"
+}
+
+enum WatchTalkState: String, Codable, Equatable {
+    case listening
+    case transcribing
+    case thinking
+    case speaking
+    case idle
+    case error
+}
+
+struct WatchTalkStateMessage: Equatable {
+    var captureId: String
+    var state: WatchTalkState
+    var text: String?
+    var sentAtMs: Int?
+}
+
+struct WatchTalkReplyMessage: Equatable {
+    var captureId: String
+    var transcript: String?
+    var replyText: String
+    var sentAtMs: Int?
 }
 
 enum WatchRiskLevel: String, Codable, Equatable {
@@ -141,8 +167,8 @@ struct WatchExecApprovalRecord: Codable, Equatable, Identifiable {
     }
 
     private static let persistedStateKey = "watch.inbox.state.v2"
-    private static let defaultTitle = "OpenClaw"
-    private static let defaultBody = "Waiting for messages from your iPhone."
+    private static let defaultTitle = "WAD"
+    private static let defaultBody = "Nessun messaggio. Premi Parla per parlare con Spock."
     private let defaults: UserDefaults
 
     var title = WatchInboxStore.defaultTitle
@@ -251,7 +277,7 @@ struct WatchExecApprovalRecord: Codable, Equatable, Identifiable {
             sentAtMs: message.sentAtMs)
         guard deliveryKey != self.lastDeliveryKey else { return }
 
-        let normalizedTitle = message.title.isEmpty ? "OpenClaw" : message.title
+        let normalizedTitle = message.title.isEmpty ? Self.defaultTitle : message.title
         self.title = normalizedTitle
         self.body = message.body
         self.transport = transport
@@ -487,8 +513,8 @@ struct WatchExecApprovalRecord: Codable, Equatable, Identifiable {
             return
         }
 
-        self.title = state.title
-        self.body = state.body
+        self.title = Self.migratedTitle(state.title)
+        self.body = Self.migratedBody(title: state.title, body: state.body)
         self.transport = state.transport
         self.updatedAt = state.updatedAt
         self.lastDeliveryKey = state.lastDeliveryKey
@@ -532,6 +558,28 @@ struct WatchExecApprovalRecord: Codable, Equatable, Identifiable {
             lastExecApprovalOutcomeAt: self.lastExecApprovalOutcomeAt)
         guard let data = try? JSONEncoder().encode(state) else { return }
         self.defaults.set(data, forKey: Self.persistedStateKey)
+    }
+
+    private static func migratedTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "OpenClaw" {
+            return Self.defaultTitle
+        }
+        return title
+    }
+
+    private static func migratedBody(title: String, body: String) -> String {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle == "OpenClaw",
+           trimmedBody == "Waiting for messages from your iPhone."
+        {
+            return Self.defaultBody
+        }
+        if trimmedBody.isEmpty {
+            return Self.defaultBody
+        }
+        return body
     }
 
     private func deliveryKey(messageID: String?, title: String, body: String, sentAtMs: Int?) -> String {

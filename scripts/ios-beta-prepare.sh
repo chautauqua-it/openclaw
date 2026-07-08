@@ -28,6 +28,8 @@ BUILD_NUMBER=""
 TEAM_ID="${IOS_DEVELOPMENT_TEAM:-}"
 PUSH_RELAY_BASE_URL="${OPENCLAW_PUSH_RELAY_BASE_URL:-${IOS_PUSH_RELAY_BASE_URL:-}}"
 PUSH_RELAY_BASE_URL_XCCONFIG=""
+PUSH_TRANSPORT="${IOS_BETA_PUSH_TRANSPORT:-relay}"
+PUSH_XCCONFIG_BLOCK=""
 IOS_VERSION=""
 
 prepare_build_dir() {
@@ -118,19 +120,36 @@ if [[ -z "${TEAM_ID}" ]]; then
   exit 1
 fi
 
-if [[ -z "${PUSH_RELAY_BASE_URL}" ]]; then
-  echo "Missing OPENCLAW_PUSH_RELAY_BASE_URL (or IOS_PUSH_RELAY_BASE_URL) for beta relay registration." >&2
+if [[ "${PUSH_TRANSPORT}" != "relay" && "${PUSH_TRANSPORT}" != "direct" ]]; then
+  echo "Invalid IOS_BETA_PUSH_TRANSPORT: expected relay or direct." >&2
   exit 1
 fi
 
-validate_push_relay_base_url "${PUSH_RELAY_BASE_URL}"
+if [[ "${PUSH_TRANSPORT}" == "relay" ]]; then
+  if [[ -z "${PUSH_RELAY_BASE_URL}" ]]; then
+    echo "Missing OPENCLAW_PUSH_RELAY_BASE_URL (or IOS_PUSH_RELAY_BASE_URL) for beta relay registration." >&2
+    exit 1
+  fi
 
-# `.xcconfig` treats `//` as a comment opener. Break the URL with a helper setting
-# so Xcode still resolves it back to `https://...` at build time.
-PUSH_RELAY_BASE_URL_XCCONFIG="$(
-  printf '%s' "${PUSH_RELAY_BASE_URL}" \
-    | sed 's#//#$(OPENCLAW_URL_SLASH)$(OPENCLAW_URL_SLASH)#g'
-)"
+  validate_push_relay_base_url "${PUSH_RELAY_BASE_URL}"
+
+  # `.xcconfig` treats `//` as a comment opener. Break the URL with a helper setting
+  # so Xcode still resolves it back to `https://...` at build time.
+  PUSH_RELAY_BASE_URL_XCCONFIG="$(
+    printf '%s' "${PUSH_RELAY_BASE_URL}" \
+      | sed 's#//#$(OPENCLAW_URL_SLASH)$(OPENCLAW_URL_SLASH)#g'
+  )"
+
+  PUSH_XCCONFIG_BLOCK="OPENCLAW_PUSH_TRANSPORT = relay
+OPENCLAW_PUSH_DISTRIBUTION = official
+OPENCLAW_URL_SLASH = /
+OPENCLAW_PUSH_RELAY_BASE_URL = ${PUSH_RELAY_BASE_URL_XCCONFIG}
+OPENCLAW_PUSH_APNS_ENVIRONMENT = production"
+else
+  PUSH_XCCONFIG_BLOCK="OPENCLAW_PUSH_TRANSPORT = direct
+OPENCLAW_PUSH_DISTRIBUTION = local
+OPENCLAW_PUSH_APNS_ENVIRONMENT = production"
+fi
 
 prepare_build_dir
 
@@ -159,13 +178,10 @@ OPENCLAW_SHARE_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.share
 OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.activitywidget
 OPENCLAW_WATCH_APP_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp
 OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp.extension
+OPENCLAW_WATCH_CONTROL_WIDGET_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp.controlwidget
 OPENCLAW_APP_PROFILE =
 OPENCLAW_SHARE_PROFILE =
-OPENCLAW_PUSH_TRANSPORT = relay
-OPENCLAW_PUSH_DISTRIBUTION = official
-OPENCLAW_URL_SLASH = /
-OPENCLAW_PUSH_RELAY_BASE_URL = ${PUSH_RELAY_BASE_URL_XCCONFIG}
-OPENCLAW_PUSH_APNS_ENVIRONMENT = production
+${PUSH_XCCONFIG_BLOCK}
 EOF
 
 (

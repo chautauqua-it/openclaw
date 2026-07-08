@@ -860,6 +860,63 @@ final class TalkModeManager: NSObject {
         }
     }
 
+    /// Relay a Watch push-to-talk utterance (already transcribed on-device) to a
+    /// specific gateway session (e.g. Spock's) and return the assistant reply text
+    /// for the Watch to speak. Runs independently of the iPhone-local talk loop:
+    /// no local mic capture, no ElevenLabs TTS, no session-restart side effects.
+    func runWatchUtterance(transcript: String, sessionKey: String) async -> String? {
+        let cleanedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedTranscript.isEmpty else { return nil }
+
+        await self.reloadConfig()
+        guard self.gatewayConnected, let gateway else {
+            GatewayDiagnostics.log("watch talk: abort gateway not connected")
+            return nil
+        }
+
+        let trimmedKey = sessionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetKey = trimmedKey.isEmpty ? self.mainSessionKey : trimmedKey
+
+        do {
+            let startedAt = Date().timeIntervalSince1970
+            await self.subscribeChatIfNeeded(sessionKey: targetKey)
+            let prompt = TalkPromptBuilder.build(
+                transcript: cleanedTranscript,
+                interruptedAtSeconds: nil,
+                includeVoiceDirectiveHint: false)
+            GatewayDiagnostics.log("watch talk: chat.send start key=\(targetKey) chars=\(prompt.count)")
+            let runId = try await self.sendChat(prompt, sessionKey: targetKey, gateway: gateway)
+            GatewayDiagnostics.log("watch talk: chat.send ok runId=\(runId)")
+
+            let completion = await self.waitForChatCompletion(
+                runId: runId,
+                gateway: gateway,
+                timeoutSeconds: 120)
+            if completion == .aborted || completion == .error {
+                GatewayDiagnostics.log("watch talk: completion \(completion) runId=\(runId)")
+                return nil
+            }
+
+            let assistantText = try await self.waitForAssistantText(
+                gateway: gateway,
+                sessionKey: targetKey,
+                since: startedAt,
+                timeoutSeconds: completion == .final ? 12 : 25)
+            guard let assistantText else {
+                GatewayDiagnostics.log("watch talk: assistant text timeout runId=\(runId)")
+                return nil
+            }
+
+            let cleaned = TalkDirectiveParser.parse(assistantText).stripped
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            GatewayDiagnostics.log("watch talk: reply ok chars=\(cleaned.count)")
+            return cleaned.isEmpty ? nil : cleaned
+        } catch {
+            GatewayDiagnostics.log("watch talk: failed error=\(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private func subscribeChatIfNeeded(sessionKey: String) async {
         let key = sessionKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
@@ -899,9 +956,17 @@ final class TalkModeManager: NSObject {
     }
 
     private func sendChat(_ message: String, gateway: GatewayNodeSession) async throws -> String {
+        try await self.sendChat(message, sessionKey: self.mainSessionKey, gateway: gateway)
+    }
+
+    private func sendChat(
+        _ message: String,
+        sessionKey: String,
+        gateway: GatewayNodeSession) async throws -> String
+    {
         struct SendResponse: Decodable { let runId: String }
         let payload: [String: Any] = [
-            "sessionKey": self.mainSessionKey,
+            "sessionKey": sessionKey,
             "message": message,
             "thinking": "low",
             "timeoutMs": 30000,
@@ -960,9 +1025,26 @@ final class TalkModeManager: NSObject {
         since: Double,
         timeoutSeconds: Int) async throws -> String?
     {
+        try await self.waitForAssistantText(
+            gateway: gateway,
+            sessionKey: self.mainSessionKey,
+            since: since,
+            timeoutSeconds: timeoutSeconds)
+    }
+
+    private func waitForAssistantText(
+        gateway: GatewayNodeSession,
+        sessionKey: String,
+        since: Double,
+        timeoutSeconds: Int) async throws -> String?
+    {
         let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
         while Date() < deadline {
-            if let text = try await self.fetchLatestAssistantText(gateway: gateway, since: since) {
+            if let text = try await self.fetchLatestAssistantText(
+                gateway: gateway,
+                sessionKey: sessionKey,
+                since: since)
+            {
                 return text
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -971,9 +1053,22 @@ final class TalkModeManager: NSObject {
     }
 
     private func fetchLatestAssistantText(gateway: GatewayNodeSession, since: Double? = nil) async throws -> String? {
+        try await self.fetchLatestAssistantText(
+            gateway: gateway,
+            sessionKey: self.mainSessionKey,
+            since: since)
+    }
+
+    private func fetchLatestAssistantText(
+        gateway: GatewayNodeSession,
+        sessionKey: String,
+        since: Double? = nil) async throws -> String?
+    {
+        let keyData = try JSONSerialization.data(withJSONObject: ["sessionKey": sessionKey])
+        let paramsJSON = String(decoding: keyData, as: UTF8.self)
         let res = try await gateway.request(
             method: "chat.history",
-            paramsJSON: "{\"sessionKey\":\"\(self.mainSessionKey)\"}",
+            paramsJSON: paramsJSON,
             timeoutSeconds: 15)
         guard let json = try JSONSerialization.jsonObject(with: res) as? [String: Any] else { return nil }
         guard let messages = json["messages"] as? [[String: Any]] else { return nil }

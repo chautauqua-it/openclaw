@@ -28,13 +28,13 @@ struct RootCanvas: View {
 
     private enum PresentedSheet: Identifiable {
         case settings
-        case chat
+        case agents
         case quickSetup
 
         var id: Int {
             switch self {
             case .settings: 0
-            case .chat: 1
+            case .agents: 1
             case .quickSetup: 2
             }
         }
@@ -93,8 +93,11 @@ struct RootCanvas: View {
                 voiceWakeToastText: self.voiceWakeToastText,
                 cameraHUDText: self.appModel.cameraHUDText,
                 cameraHUDKind: self.appModel.cameraHUDKind,
-                openChat: {
-                    self.presentedSheet = .chat
+                openChannels: {
+                    self.openWADChannels()
+                },
+                openAgents: {
+                    self.presentedSheet = .agents
                 },
                 openSettings: {
                     self.presentedSheet = .settings
@@ -118,7 +121,7 @@ struct RootCanvas: View {
                     .environment(self.appModel)
                     .environment(self.appModel.voiceWake)
                     .environment(self.gatewayController)
-            case .chat:
+            case .agents:
                 ChatSheet(
                     // Chat RPCs run on the operator session (read/write scopes).
                     gateway: self.appModel.operatorSession,
@@ -193,7 +196,7 @@ struct RootCanvas: View {
             self.maybeAutoOpenSettings()
         }
         .onChange(of: self.appModel.openChatRequestID) { _, _ in
-            self.presentedSheet = .chat
+            self.presentedSheet = .agents
         }
         .onChange(of: self.voiceWake.lastTriggeredCommand) { _, newValue in
             guard let newValue else { return }
@@ -237,6 +240,13 @@ struct RootCanvas: View {
         self.appModel.screen.updateDebugStatus(title: title, subtitle: subtitle)
     }
 
+    private func openWADChannels() {
+        self.presentedSheet = nil
+        self.appModel.screen.navigate(to: Self.wadChannelsURL)
+    }
+
+    private static let wadChannelsURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:8456/app/chat"
+
     private func updateHomeCanvasState() {
         let payload = self.makeHomeCanvasPayload()
         guard let data = try? JSONEncoder().encode(payload),
@@ -259,49 +269,47 @@ struct RootCanvas: View {
         case .connected:
             return HomeCanvasPayload(
                 gatewayState: "connected",
-                eyebrow: "Connected to \(gatewayLabel)",
-                title: "Your agents are ready",
+                eyebrow: "Connesso a \(gatewayLabel)",
+                title: "WAD è pronto",
                 subtitle:
-                "This phone stays dormant until the gateway needs it, then wakes, syncs, and goes back to sleep.",
+                "Chat apre i canali WAD. Agenti apre la conversazione diretta con l'agente selezionato.",
                 gatewayLabel: gatewayLabel,
                 activeAgentName: self.appModel.activeAgentName,
                 activeAgentBadge: agents.first(where: { $0.isActive })?.badge ?? "OC",
-                activeAgentCaption: "Selected on this phone",
+                activeAgentCaption: "Agente selezionato",
                 agentCount: agents.count,
                 agents: Array(agents.prefix(6)),
-                footer: "The overview refreshes on reconnect and when the app returns to foreground.")
+                footer: "La vista si aggiorna quando l'app torna in primo piano.")
         case .connecting:
             return HomeCanvasPayload(
                 gatewayState: "connecting",
-                eyebrow: "Reconnecting",
-                title: "OpenClaw is syncing back up",
+                eyebrow: "Riconnessione",
+                title: "WAD si sta riallineando",
                 subtitle:
-                "The gateway session is coming back online. "
-                    + "Agent shortcuts should settle automatically in a moment.",
+                "La sessione gateway sta tornando online. "
+                    + "Le scorciatoie degli agenti si sistemano automaticamente tra poco.",
                 gatewayLabel: gatewayLabel,
                 activeAgentName: self.appModel.activeAgentName,
                 activeAgentBadge: "OC",
-                activeAgentCaption: "Gateway session in progress",
+                activeAgentCaption: "Sessione gateway in corso",
                 agentCount: agents.count,
                 agents: Array(agents.prefix(4)),
-                footer: "If the gateway is reachable, reconnect should complete without intervention.")
+                footer: "Se il gateway è raggiungibile, la riconnessione si chiude senza interventi.")
         case .error, .disconnected:
             return HomeCanvasPayload(
                 gatewayState: self.gatewayStatus == .error ? "error" : "offline",
-                eyebrow: "Welcome to OpenClaw",
-                title: "Your phone stays quiet until it is needed",
+                eyebrow: "WAD",
+                title: "Il telefono resta pronto quando serve",
                 subtitle:
-                "Pair this device to your gateway to wake it only for real work, "
-                    + "keep a live agent overview handy, and avoid battery-draining background loops.",
+                "Abbina questo iPhone al gateway per usare canali, agenti e strumenti dal telefono.",
                 gatewayLabel: gatewayLabel,
                 activeAgentName: "Main",
                 activeAgentBadge: "OC",
-                activeAgentCaption: "Connect to load your agents",
+                activeAgentCaption: "Connetti per caricare gli agenti",
                 agentCount: agents.count,
                 agents: Array(agents.prefix(4)),
                 footer:
-                "When connected, the gateway can wake the phone with a silent push "
-                    + "instead of holding an always-on session.")
+                "Quando è connesso, il gateway può svegliare il telefono solo quando serve.")
         }
     }
 
@@ -455,7 +463,6 @@ private struct HomeCanvasAgentCard: Codable {
 private struct CanvasContent: View {
     @Environment(NodeAppModel.self) private var appModel
     @AppStorage("talk.enabled") private var talkEnabled: Bool = false
-    @AppStorage("talk.button.enabled") private var talkButtonEnabled: Bool = true
     @State private var showGatewayActions: Bool = false
     @State private var showGatewayProblemDetails: Bool = false
     var systemColorScheme: ColorScheme
@@ -464,7 +471,8 @@ private struct CanvasContent: View {
     var voiceWakeToastText: String?
     var cameraHUDText: String?
     var cameraHUDKind: NodeAppModel.CameraHUDKind?
-    var openChat: () -> Void
+    var openChannels: () -> Void
+    var openAgents: () -> Void
     var openSettings: () -> Void
     var retryGatewayConnection: () -> Void
 
@@ -492,7 +500,6 @@ private struct CanvasContent: View {
                 voiceWakeEnabled: self.voiceWakeEnabled,
                 activity: self.statusActivity,
                 brighten: self.brightenButtons,
-                talkButtonEnabled: self.talkButtonEnabled,
                 talkActive: self.talkActive,
                 talkTint: self.appModel.seamColor,
                 onStatusTap: {
@@ -504,13 +511,11 @@ private struct CanvasContent: View {
                         self.openSettings()
                     }
                 },
-                onChatTap: {
-                    self.openChat()
+                onChannelsTap: {
+                    self.openChannels()
                 },
-                onTalkTap: {
-                    let next = !self.talkActive
-                    self.talkEnabled = next
-                    self.appModel.setTalkEnabled(next)
+                onAgentsTap: {
+                    self.openAgents()
                 },
                 onSettingsTap: {
                     self.openSettings()

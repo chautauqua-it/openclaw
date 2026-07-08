@@ -1,10 +1,19 @@
 require "shellwords"
 require "open3"
 require "json"
+require "tmpdir"
 
 default_platform(:ios)
 
-BETA_APP_IDENTIFIER = "ai.openclaw.client"
+def beta_app_identifier
+  %w[IOS_BETA_APP_IDENTIFIER ASC_APP_IDENTIFIER].each do |key|
+    value = ENV[key]
+    return value.strip if value && !value.strip.empty?
+  end
+  "ai.openclaw.client"
+end
+
+BETA_APP_IDENTIFIER = beta_app_identifier
 
 def load_env_file(path)
   return unless File.exist?(path)
@@ -184,10 +193,39 @@ def prepare_beta_release!(version:, build_number:)
   beta_xcconfig
 end
 
+def asc_auth_export_xcargs(api_key)
+  return "-allowProvisioningUpdates" if api_key.nil?
+
+  key_id = api_key[:key_id]
+  issuer_id = api_key[:issuer_id]
+  key_path = api_key[:key_filepath]
+
+  if !env_present?(key_path)
+    key_content = api_key[:key]
+    return "-allowProvisioningUpdates" unless env_present?(key_content)
+
+    tmp = File.join(Dir.tmpdir, "AuthKey_#{key_id}.p8")
+    File.write(tmp, key_content)
+    File.chmod(0o600, tmp)
+    key_path = tmp
+  end
+
+  return "-allowProvisioningUpdates" unless [key_id, issuer_id, key_path].all? { |v| env_present?(v) }
+
+  shell_join([
+    "-allowProvisioningUpdates",
+    "-authenticationKeyPath", key_path,
+    "-authenticationKeyID", key_id,
+    "-authenticationKeyIssuerID", issuer_id
+  ])
+end
+
 def build_beta_release(context)
   version = context[:version]
   output_directory = File.join("build", "beta")
   archive_path = File.join(output_directory, "OpenClaw-#{version}.xcarchive")
+
+  export_xcargs = asc_auth_export_xcargs(context[:api_key])
 
   build_app(
     project: "OpenClaw.xcodeproj",
@@ -201,7 +239,7 @@ def build_beta_release(context)
     output_directory: output_directory,
     output_name: "OpenClaw-#{version}.ipa",
     xcargs: "-allowProvisioningUpdates",
-    export_xcargs: "-allowProvisioningUpdates",
+    export_xcargs: export_xcargs,
     export_options: {
       signingStyle: "automatic"
     }
@@ -301,6 +339,7 @@ platform :ios do
 
     upload_to_testflight(
       api_key: context[:api_key],
+      app_identifier: BETA_APP_IDENTIFIER,
       ipa: build[:ipa_path],
       skip_waiting_for_build_processing: true,
       uses_non_exempt_encryption: false

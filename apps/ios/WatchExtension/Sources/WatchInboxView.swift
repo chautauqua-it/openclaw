@@ -257,6 +257,17 @@ private struct WatchGenericInboxView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    WatchTalkLaunchSignal.shared.request()
+                } label: {
+                    Label("Agenti", systemImage: "person.wave.2.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
+
                 Text(self.store.title)
                     .font(.headline)
                     .lineLimit(2)
@@ -305,6 +316,6 @@ private struct WatchGenericInboxView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
         }
-        .navigationTitle("OpenClaw")
+        .navigationTitle("WAD")
     }
 }

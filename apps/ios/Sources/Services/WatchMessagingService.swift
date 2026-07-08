@@ -27,6 +27,7 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
     private var execApprovalResolveHandler: (@Sendable (WatchExecApprovalResolveEvent) -> Void)?
     private var execApprovalSnapshotRequestHandler: (
         @Sendable (WatchExecApprovalSnapshotRequestEvent) -> Void)?
+    private var talkUtteranceHandler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?
 
     init(transport: WatchConnectivityTransport = WatchConnectivityTransport()) {
         self.transport = transport
@@ -48,6 +49,11 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
         self.transport.setExecApprovalSnapshotRequestHandler { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.emitExecApprovalSnapshotRequest(event)
+            }
+        }
+        self.transport.setTalkUtteranceHandler { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.emitTalkUtterance(event)
             }
         }
     }
@@ -95,6 +101,10 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
         self.execApprovalSnapshotRequestHandler = handler
     }
 
+    func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?) {
+        self.talkUtteranceHandler = handler
+    }
+
     func sendNotification(
         id: String,
         params: OpenClawWatchNotifyParams) async throws -> WatchNotificationSendResult
@@ -131,6 +141,20 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
             WatchMessagingPayloadCodec.encodeExecApprovalSnapshotPayload(message))
     }
 
+    func sendTalkState(
+        _ message: OpenClawWatchTalkStateMessage) async throws -> WatchNotificationSendResult
+    {
+        try await self.transport.sendPayload(
+            WatchMessagingPayloadCodec.encodeTalkStatePayload(message))
+    }
+
+    func sendTalkReply(
+        _ message: OpenClawWatchTalkReplyMessage) async throws -> WatchNotificationSendResult
+    {
+        try await self.transport.sendPayload(
+            WatchMessagingPayloadCodec.encodeTalkReplyPayload(message))
+    }
+
     private func emitStatusIfChanged(_ snapshot: WatchMessagingStatus) {
         guard snapshot != self.lastEmittedStatus else {
             return
@@ -158,5 +182,13 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
                 + "id=\(event.requestId) transport=\(event.transport) "
                 + "sentAtMs=\(event.sentAtMs ?? -1)")
         self.execApprovalSnapshotRequestHandler?(event)
+    }
+
+    private func emitTalkUtterance(_ event: WatchTalkUtteranceEvent) {
+        GatewayDiagnostics.log(
+            "watch messaging: talk utterance "
+                + "capture=\(event.captureId) transport=\(event.transport) "
+                + "chars=\(event.transcript.count)")
+        self.talkUtteranceHandler?(event)
     }
 }

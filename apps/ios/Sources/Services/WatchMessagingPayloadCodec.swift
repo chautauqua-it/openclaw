@@ -151,6 +151,59 @@ enum WatchMessagingPayloadCodec {
         return payload
     }
 
+    static func encodeTalkStatePayload(
+        _ message: OpenClawWatchTalkStateMessage) -> [String: Any]
+    {
+        var payload: [String: Any] = [
+            "type": OpenClawWatchPayloadType.talkState.rawValue,
+            "captureId": message.captureId,
+            "state": message.state.rawValue,
+        ]
+        if let text = nonEmpty(message.text) {
+            payload["text"] = text
+        }
+        payload["sentAtMs"] = message.sentAtMs ?? self.nowMs()
+        return payload
+    }
+
+    static func encodeTalkReplyPayload(
+        _ message: OpenClawWatchTalkReplyMessage) -> [String: Any]
+    {
+        var payload: [String: Any] = [
+            "type": OpenClawWatchPayloadType.talkReply.rawValue,
+            "captureId": message.captureId,
+            "replyText": message.replyText,
+        ]
+        if let transcript = nonEmpty(message.transcript) {
+            payload["transcript"] = transcript
+        }
+        payload["sentAtMs"] = message.sentAtMs ?? self.nowMs()
+        return payload
+    }
+
+    static func parseTalkUtterancePayload(
+        _ payload: [String: Any],
+        transport: String) -> WatchTalkUtteranceEvent?
+    {
+        guard (payload["type"] as? String) == OpenClawWatchPayloadType.talkUtterance.rawValue else {
+            return nil
+        }
+        guard let transcript = nonEmpty(payload["transcript"] as? String) else {
+            return nil
+        }
+        let captureId = self.nonEmpty(payload["captureId"] as? String) ?? UUID().uuidString
+        let targetSessionKey = self.nonEmpty(payload["targetSessionKey"] as? String)
+        let targetLabel = self.nonEmpty(payload["targetLabel"] as? String)
+        let sentAtMs = (payload["sentAtMs"] as? Int) ?? (payload["sentAtMs"] as? NSNumber)?.intValue
+        return WatchTalkUtteranceEvent(
+            captureId: captureId,
+            transcript: transcript,
+            targetSessionKey: targetSessionKey,
+            targetLabel: targetLabel,
+            sentAtMs: sentAtMs,
+            transport: transport)
+    }
+
     static func parseQuickReplyPayload(
         _ payload: [String: Any],
         transport: String) -> WatchQuickReplyEvent?

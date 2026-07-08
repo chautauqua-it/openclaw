@@ -102,6 +102,15 @@ struct WatchExecApprovalSnapshotRequestEvent: Equatable {
     var transport: String
 }
 
+struct WatchTalkUtteranceEvent: Equatable {
+    var captureId: String
+    var transcript: String
+    var targetSessionKey: String?
+    var targetLabel: String?
+    var sentAtMs: Int?
+    var transport: String
+}
+
 struct WatchNotificationSendResult: Equatable {
     var deliveredImmediately: Bool
     var queuedForDelivery: Bool
@@ -115,6 +124,11 @@ protocol WatchMessagingServicing: AnyObject, Sendable {
     func setExecApprovalResolveHandler(_ handler: (@Sendable (WatchExecApprovalResolveEvent) -> Void)?)
     func setExecApprovalSnapshotRequestHandler(
         _ handler: (@Sendable (WatchExecApprovalSnapshotRequestEvent) -> Void)?)
+    func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?)
+    func sendTalkState(
+        _ message: OpenClawWatchTalkStateMessage) async throws -> WatchNotificationSendResult
+    func sendTalkReply(
+        _ message: OpenClawWatchTalkReplyMessage) async throws -> WatchNotificationSendResult
     func sendNotification(
         id: String,
         params: OpenClawWatchNotifyParams) async throws -> WatchNotificationSendResult

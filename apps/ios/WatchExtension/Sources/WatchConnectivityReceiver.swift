@@ -23,6 +23,7 @@ final class WatchConnectivityReceiver: NSObject, @unchecked Sendable {
 
     private let store: WatchInboxStore
     private let session: WCSession?
+    weak var talkController: WatchTalkController?
 
     init(store: WatchInboxStore) {
         self.store = store
@@ -103,6 +104,40 @@ final class WatchConnectivityReceiver: NSObject, @unchecked Sendable {
             payload["note"] = note
         }
 
+        return await self.sendPayload(payload, session: session)
+    }
+
+    func sendTalkUtterance(
+        captureId: String,
+        transcript: String,
+        targetSessionKey: String? = nil,
+        targetLabel: String? = nil) async -> WatchReplySendResult
+    {
+        await self.ensureActivated()
+        guard let session = self.session else {
+            return WatchReplySendResult(
+                deliveredImmediately: false,
+                queuedForDelivery: false,
+                transport: "none",
+                errorMessage: "watch session unavailable")
+        }
+
+        var payload: [String: Any] = [
+            "type": WatchPayloadType.talkUtterance.rawValue,
+            "captureId": captureId,
+            "transcript": transcript,
+            "sentAtMs": Self.nowMs(),
+        ]
+        if let targetSessionKey = targetSessionKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !targetSessionKey.isEmpty
+        {
+            payload["targetSessionKey"] = targetSessionKey
+        }
+        if let targetLabel = targetLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !targetLabel.isEmpty
+        {
+            payload["targetLabel"] = targetLabel
+        }
         return await self.sendPayload(payload, session: session)
     }
 
@@ -364,6 +399,51 @@ final class WatchConnectivityReceiver: NSObject, @unchecked Sendable {
             snapshotId: snapshotId)
     }
 
+    private static func parseTalkStatePayload(_ payload: [String: Any]) -> WatchTalkStateMessage? {
+        guard let type = payload["type"] as? String,
+              type == WatchPayloadType.talkState.rawValue
+        else {
+            return nil
+        }
+        let captureId = (payload["captureId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rawState = (payload["state"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !captureId.isEmpty, let state = WatchTalkState(rawValue: rawState) else {
+            return nil
+        }
+        let text = (payload["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentAtMs = (payload["sentAtMs"] as? Int) ?? (payload["sentAtMs"] as? NSNumber)?.intValue
+        return WatchTalkStateMessage(
+            captureId: captureId,
+            state: state,
+            text: (text?.isEmpty == false) ? text : nil,
+            sentAtMs: sentAtMs)
+    }
+
+    private static func parseTalkReplyPayload(_ payload: [String: Any]) -> WatchTalkReplyMessage? {
+        guard let type = payload["type"] as? String,
+              type == WatchPayloadType.talkReply.rawValue
+        else {
+            return nil
+        }
+        let captureId = (payload["captureId"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let replyText = (payload["replyText"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !captureId.isEmpty, !replyText.isEmpty else {
+            return nil
+        }
+        let transcript = (payload["transcript"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentAtMs = (payload["sentAtMs"] as? Int) ?? (payload["sentAtMs"] as? NSNumber)?.intValue
+        return WatchTalkReplyMessage(
+            captureId: captureId,
+            transcript: (transcript?.isEmpty == false) ? transcript : nil,
+            replyText: replyText,
+            sentAtMs: sentAtMs)
+    }
+
     private static func encodeSnapshotRequestPayload(
         _ request: WatchExecApprovalSnapshotRequestMessage) -> [String: Any]
     {
@@ -453,6 +533,18 @@ extension WatchConnectivityReceiver: WCSessionDelegate {
         if let snapshot = Self.parseExecApprovalSnapshotPayload(payload) {
             Task { @MainActor in
                 self.store.consume(execApprovalSnapshot: snapshot, transport: transport)
+            }
+            return
+        }
+        if let talkState = Self.parseTalkStatePayload(payload) {
+            Task { @MainActor in
+                self.talkController?.ingest(state: talkState)
+            }
+            return
+        }
+        if let talkReply = Self.parseTalkReplyPayload(payload) {
+            Task { @MainActor in
+                self.talkController?.ingest(reply: talkReply)
             }
         }
     }

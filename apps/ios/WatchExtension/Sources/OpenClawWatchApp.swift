@@ -5,6 +5,9 @@ struct OpenClawWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var inboxStore = WatchInboxStore()
     @State private var receiver: WatchConnectivityReceiver?
+    @State private var talkController: WatchTalkController?
+    @State private var isTalkPresented = false
+    @State private var talkSignal = WatchTalkLaunchSignal.shared
     @State private var execApprovalRefreshTask: Task<Void, Never>?
 
     var body: some Scene {
@@ -39,14 +42,30 @@ struct OpenClawWatchApp: App {
                 .task {
                     if self.receiver == nil {
                         let receiver = WatchConnectivityReceiver(store: self.inboxStore)
+                        let talk = WatchTalkController(receiver: receiver)
+                        receiver.talkController = talk
                         receiver.activate()
                         self.receiver = receiver
+                        self.talkController = talk
                     }
                     self.refreshExecApprovalReview()
                 }
                 .onChange(of: self.scenePhase) { _, newPhase in
                     guard newPhase == .active else { return }
                     self.refreshExecApprovalReview()
+                }
+                .onChange(of: self.talkSignal.activationToken) { _, _ in
+                    guard self.talkController != nil else { return }
+                    self.isTalkPresented = true
+                }
+                .sheet(isPresented: self.$isTalkPresented) {
+                    if let talkController = self.talkController {
+                        NavigationStack {
+                            WatchTalkView(
+                                controller: talkController,
+                                onClose: { self.isTalkPresented = false })
+                        }
+                    }
                 }
         }
     }

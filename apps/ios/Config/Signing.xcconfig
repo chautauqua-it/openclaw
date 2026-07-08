@@ -8,6 +8,7 @@ OPENCLAW_CODE_SIGN_STYLE = Automatic
 OPENCLAW_APP_BUNDLE_ID = ai.openclaw.client
 OPENCLAW_WATCH_APP_BUNDLE_ID = ai.openclaw.client.watchkitapp
 OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ai.openclaw.client.watchkitapp.extension
+OPENCLAW_WATCH_CONTROL_WIDGET_BUNDLE_ID = ai.openclaw.client.watchkitapp.controlwidget
 OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ai.openclaw.client.activitywidget
 OPENCLAW_WATCH_APP_PROFILE =
 OPENCLAW_WATCH_EXTENSION_PROFILE =

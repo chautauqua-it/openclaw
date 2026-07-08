@@ -273,6 +273,11 @@ final class NodeAppModel {
                 await self.refreshWatchExecApprovalSnapshotOnDemand(reason: "watch_request")
             }
         }
+        self.watchMessagingService.setTalkUtteranceHandler { [weak self] event in
+            Task { @MainActor in
+                await self?.handleWatchTalkUtterance(event)
+            }
+        }
 
         self.voiceWake.configure { [weak self] cmd in
             guard let self else { return }
@@ -2651,6 +2656,82 @@ extension NodeAppModel {
     private func flushQueuedWatchRepliesIfConnected() async {
         for event in await self.watchReplyCoordinator.drainIfConnected(self.isGatewayConnected()) {
             await self.forwardWatchReplyToAgent(event)
+        }
+    }
+
+    private func handleWatchTalkUtterance(_ event: WatchTalkUtteranceEvent) async {
+        let transcript = event.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
+            GatewayDiagnostics.log("watch talk: dropped empty utterance capture=\(event.captureId)")
+            return
+        }
+        let sessionKey = self.resolveWatchTalkSessionKey(
+            sessionKey: event.targetSessionKey,
+            label: event.targetLabel)
+        GatewayDiagnostics.log(
+            "watch talk: utterance capture=\(event.captureId) key=\(sessionKey) chars=\(transcript.count)")
+
+        await self.sendWatchTalkState(captureId: event.captureId, state: .thinking, text: transcript)
+
+        let reply = await self.talkMode.runWatchUtterance(transcript: transcript, sessionKey: sessionKey)
+        guard let reply, !reply.isEmpty else {
+            await self.sendWatchTalkState(
+                captureId: event.captureId,
+                state: .error,
+                text: "Nessuna risposta")
+            return
+        }
+        await self.sendWatchTalkReply(
+            captureId: event.captureId,
+            transcript: transcript,
+            replyText: reply)
+    }
+
+    private func resolveWatchTalkSessionKey(sessionKey: String?, label: String?) -> String {
+        if let sessionKey = sessionKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           SessionKey.isCanonicalMainSessionKey(sessionKey)
+        {
+            return sessionKey
+        }
+        let base = SessionKey.normalizeMainKey(self.mainSessionBaseKey)
+        let wanted = (label ?? sessionKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return self.mainSessionKey }
+        if let match = self.gatewayAgents.first(where: {
+            $0.id.caseInsensitiveCompare(wanted) == .orderedSame
+                || ($0.name?.caseInsensitiveCompare(wanted) == .orderedSame)
+        }) {
+            return SessionKey.makeAgentSessionKey(agentId: match.id, baseKey: base)
+        }
+        // No directory match: treat the label as a raw agent id (e.g. "spock").
+        return SessionKey.makeAgentSessionKey(agentId: wanted, baseKey: base)
+    }
+
+    private func sendWatchTalkState(
+        captureId: String,
+        state: OpenClawWatchTalkState,
+        text: String?) async
+    {
+        let message = OpenClawWatchTalkStateMessage(captureId: captureId, state: state, text: text)
+        do {
+            _ = try await self.watchMessagingService.sendTalkState(message)
+        } catch {
+            GatewayDiagnostics.log("watch talk: sendTalkState failed error=\(error.localizedDescription)")
+        }
+    }
+
+    private func sendWatchTalkReply(
+        captureId: String,
+        transcript: String,
+        replyText: String) async
+    {
+        let message = OpenClawWatchTalkReplyMessage(
+            captureId: captureId,
+            transcript: transcript,
+            replyText: replyText)
+        do {
+            _ = try await self.watchMessagingService.sendTalkReply(message)
+        } catch {
+            GatewayDiagnostics.log("watch talk: sendTalkReply failed error=\(error.localizedDescription)")
         }
     }
 

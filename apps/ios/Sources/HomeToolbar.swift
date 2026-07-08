@@ -5,12 +5,11 @@ struct HomeToolbar: View {
     var voiceWakeEnabled: Bool
     var activity: StatusPill.Activity?
     var brighten: Bool
-    var talkButtonEnabled: Bool
     var talkActive: Bool
     var talkTint: Color
     var onStatusTap: () -> Void
-    var onChatTap: () -> Void
-    var onTalkTap: () -> Void
+    var onChannelsTap: () -> Void
+    var onAgentsTap: () -> Void
     var onSettingsTap: () -> Void
 
     @Environment(\.colorSchemeContrast) private var contrast
@@ -37,17 +36,15 @@ struct HomeToolbar: View {
                         systemImage: "text.bubble.fill",
                         accessibilityLabel: "Chat",
                         brighten: self.brighten,
-                        action: self.onChatTap)
+                        action: self.onChannelsTap)
 
-                    if self.talkButtonEnabled {
-                        HomeToolbarActionButton(
-                            systemImage: self.talkActive ? "waveform.circle.fill" : "waveform.circle",
-                            accessibilityLabel: self.talkActive ? "Talk Mode On" : "Talk Mode Off",
-                            brighten: self.brighten,
-                            tint: self.talkTint,
-                            isActive: self.talkActive,
-                            action: self.onTalkTap)
-                    }
+                    HomeToolbarActionButton(
+                        systemImage: self.talkActive ? "person.wave.2.fill" : "person.wave.2",
+                        accessibilityLabel: "Agenti",
+                        brighten: self.brighten,
+                        tint: self.talkTint,
+                        isActive: self.talkActive,
+                        action: self.onAgentsTap)
 
                     HomeToolbarActionButton(
                         systemImage: "gearshape.fill",

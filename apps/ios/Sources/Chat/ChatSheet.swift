@@ -41,7 +41,7 @@ struct ChatSheet: View {
 
     private var chatTitle: String {
         let trimmed = (self.agentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "Chat" }
-        return "Chat (\(trimmed))"
+        if trimmed.isEmpty { return "Agenti" }
+        return "Agenti (\(trimmed))"
     }
 }

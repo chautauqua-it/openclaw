@@ -14,6 +14,97 @@ public enum OpenClawWatchPayloadType: String, Codable, Sendable, Equatable {
     case execApprovalExpired = "watch.execApproval.expired"
     case execApprovalSnapshot = "watch.execApproval.snapshot"
     case execApprovalSnapshotRequest = "watch.execApproval.snapshotRequest"
+    // Push-to-talk. The Watch runs on-device STT/TTS and relays plain text:
+    // Watch → iPhone (utterance) → gateway session → reply text back to Watch,
+    // which speaks it locally. No raw audio crosses the WCSession link.
+    case talkUtterance = "watch.talk.utterance"
+    case talkState = "watch.talk.state"
+    case talkReply = "watch.talk.reply"
+}
+
+/// Lifecycle state of a Watch push-to-talk capture, mirrored from the iPhone
+/// so the Watch can render "listening / thinking / speaking" without owning the
+/// audio pipeline itself.
+public enum OpenClawWatchTalkState: String, Codable, Sendable, Equatable {
+    case listening
+    case transcribing
+    case thinking
+    case speaking
+    case idle
+    case error
+}
+
+/// Watch → iPhone: the wearer finished a push-to-talk utterance. The Watch has
+/// already transcribed the audio on-device; this delivers the final text plus
+/// the gateway target (e.g. Spock's session) for the iPhone to relay.
+public struct OpenClawWatchTalkUtteranceMessage: Codable, Sendable, Equatable {
+    public var type: OpenClawWatchPayloadType
+    public var captureId: String
+    public var transcript: String
+    public var targetSessionKey: String?
+    public var targetLabel: String?
+    public var sentAtMs: Int?
+
+    public init(
+        captureId: String,
+        transcript: String,
+        targetSessionKey: String? = nil,
+        targetLabel: String? = nil,
+        sentAtMs: Int? = nil)
+    {
+        self.type = .talkUtterance
+        self.captureId = captureId
+        self.transcript = transcript
+        self.targetSessionKey = targetSessionKey
+        self.targetLabel = targetLabel
+        self.sentAtMs = sentAtMs
+    }
+}
+
+/// iPhone → Watch: progress updates for an in-flight capture so the wrist UI can
+/// reflect thinking / speaking and surface the recognized transcript.
+public struct OpenClawWatchTalkStateMessage: Codable, Sendable, Equatable {
+    public var type: OpenClawWatchPayloadType
+    public var captureId: String
+    public var state: OpenClawWatchTalkState
+    public var text: String?
+    public var sentAtMs: Int?
+
+    public init(
+        captureId: String,
+        state: OpenClawWatchTalkState,
+        text: String? = nil,
+        sentAtMs: Int? = nil)
+    {
+        self.type = .talkState
+        self.captureId = captureId
+        self.state = state
+        self.text = text
+        self.sentAtMs = sentAtMs
+    }
+}
+
+/// iPhone → Watch: the gateway reply for a capture. `replyText` is spoken on the
+/// wrist via the Watch's on-device speech synthesizer; no audio is transferred.
+public struct OpenClawWatchTalkReplyMessage: Codable, Sendable, Equatable {
+    public var type: OpenClawWatchPayloadType
+    public var captureId: String
+    public var transcript: String?
+    public var replyText: String
+    public var sentAtMs: Int?
+
+    public init(
+        captureId: String,
+        transcript: String? = nil,
+        replyText: String,
+        sentAtMs: Int? = nil)
+    {
+        self.type = .talkReply
+        self.captureId = captureId
+        self.transcript = transcript
+        self.replyText = replyText
+        self.sentAtMs = sentAtMs
+    }
 }
 
 public enum OpenClawWatchRisk: String, Codable, Sendable, Equatable {
