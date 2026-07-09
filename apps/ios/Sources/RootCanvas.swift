@@ -25,17 +25,20 @@ struct RootCanvas: View {
     @State private var onboardingAllowSkip: Bool = true
     @State private var didEvaluateOnboarding: Bool = false
     @State private var didAutoOpenSettings: Bool = false
+    @State private var wadSiriLaunchSignal = WADSiriLaunchSignal.shared
 
     private enum PresentedSheet: Identifiable {
+        case wadChat
         case settings
         case agents
         case quickSetup
 
         var id: Int {
             switch self {
-            case .settings: 0
-            case .agents: 1
-            case .quickSetup: 2
+            case .wadChat: 0
+            case .settings: 1
+            case .agents: 2
+            case .quickSetup: 3
             }
         }
     }
@@ -116,6 +119,8 @@ struct RootCanvas: View {
         .execApprovalPromptDialog()
         .sheet(item: self.$presentedSheet) { sheet in
             switch sheet {
+            case .wadChat:
+                WADNativeChatSheet()
             case .settings:
                 SettingsTab()
                     .environment(self.appModel)
@@ -148,6 +153,7 @@ struct RootCanvas: View {
         .onAppear { self.updateHomeCanvasState() }
         .onAppear { self.evaluateOnboardingPresentation(force: false) }
         .onAppear { self.maybeAutoOpenSettings() }
+        .onAppear { self.presentPendingWADSiriRoute() }
         .onChange(of: self.preventSleep) { _, _ in self.updateIdleTimer() }
         .onChange(of: self.scenePhase) { _, newValue in
             self.updateIdleTimer()
@@ -198,6 +204,9 @@ struct RootCanvas: View {
         .onChange(of: self.appModel.openChatRequestID) { _, _ in
             self.presentedSheet = .agents
         }
+        .onChange(of: self.wadSiriLaunchSignal.activationToken) { _, _ in
+            self.presentPendingWADSiriRoute()
+        }
         .onChange(of: self.voiceWake.lastTriggeredCommand) { _, newValue in
             guard let newValue else { return }
             let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -241,11 +250,18 @@ struct RootCanvas: View {
     }
 
     private func openWADChannels() {
-        self.presentedSheet = nil
-        self.appModel.screen.navigate(to: Self.wadChannelsURL)
+        self.presentedSheet = .wadChat
     }
 
-    private static let wadChannelsURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:8456/app/chat"
+    private func presentPendingWADSiriRoute() {
+        guard let route = self.wadSiriLaunchSignal.consumePendingRoute() else { return }
+        switch route {
+        case .agents:
+            self.presentedSheet = .agents
+        case .chat:
+            self.presentedSheet = .wadChat
+        }
+    }
 
     private func updateHomeCanvasState() {
         let payload = self.makeHomeCanvasPayload()
