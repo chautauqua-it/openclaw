@@ -1,233 +1,8 @@
 import Foundation
+import PhotosUI
 import SwiftUI
 
-private enum WADAPIError: LocalizedError {
-    case unreachable
-    case unauthorized
-    case server(String)
-    case decoding(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .unreachable:
-            "WAD non raggiungibile. Controlla Tailscale."
-        case .unauthorized:
-            "Sessione scaduta. Esegui di nuovo il login."
-        case let .server(message):
-            message
-        case let .decoding(message):
-            "Risposta WAD non valida: \(message)"
-        }
-    }
-}
-
-private typealias WADJSON = [String: Any]
 private typealias WADChannelGroup = (group: String, channels: [WADChatChannel])
-
-private struct WADRequestOptions: @unchecked Sendable {
-    let method: String
-    let json: WADJSON?
-    let login: Bool
-
-    init(method: String = "GET", json: WADJSON? = nil, login: Bool = false) {
-        self.method = method
-        self.json = json
-        self.login = login
-    }
-}
-
-private actor WADAPIClient {
-    static let shared = WADAPIClient()
-    static let fallbackBaseURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:8456"
-
-    private let decoder: JSONDecoder
-
-    init() {
-        self.decoder = JSONDecoder()
-        self.decoder.keyDecodingStrategy = .convertFromSnakeCase
-    }
-
-    nonisolated var baseURL: String {
-        UserDefaults.standard.string(forKey: "wad.native.baseURL") ?? Self.fallbackBaseURL
-    }
-
-    nonisolated func setBaseURL(_ url: String) {
-        let trimmed = url
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        UserDefaults.standard.set(trimmed, forKey: "wad.native.baseURL")
-    }
-
-    private func makeURL(_ path: String) throws -> URL {
-        guard let url = URL(string: self.baseURL + path) else {
-            throw WADAPIError.server("URL WAD non valido")
-        }
-        return url
-    }
-
-    private func request(_ path: String, options: WADRequestOptions = WADRequestOptions()) async throws -> Data {
-        let url = try self.makeURL(path)
-        var request = URLRequest(url: url)
-        request.httpMethod = options.method
-        request.timeoutInterval = 15
-        if let json = options.json {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: json)
-        }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw WADAPIError.server("Risposta WAD sconosciuta")
-            }
-            if http.statusCode == 401 {
-                if options.login {
-                    let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-                    throw WADAPIError.server(message ?? "Credenziali non valide")
-                }
-                throw WADAPIError.unauthorized
-            }
-            if !(200...299).contains(http.statusCode) {
-                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-                throw WADAPIError.server(message ?? "Errore WAD \(http.statusCode)")
-            }
-            return data
-        } catch let error as WADAPIError {
-            throw error
-        } catch let error as URLError {
-            switch error.code {
-            case .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .timedOut, .networkConnectionLost:
-                throw WADAPIError.unreachable
-            default:
-                throw WADAPIError.server(error.localizedDescription)
-            }
-        }
-    }
-
-    private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        do {
-            return try self.decoder.decode(T.self, from: data)
-        } catch {
-            throw WADAPIError.decoding(String(describing: error))
-        }
-    }
-
-    func login(username: String, password: String) async throws -> WADCurrentUser {
-        struct Response: Decodable { let user: WADCurrentUser }
-        let data = try await self.request(
-            "/api/login",
-            options: WADRequestOptions(
-                method: "POST",
-                json: ["username": username, "password": password],
-                login: true))
-        return try self.decode(Response.self, from: data).user
-    }
-
-    func me() async throws -> WADCurrentUser {
-        struct Response: Decodable { let user: WADCurrentUser }
-        let data = try await self.request("/api/me")
-        return try self.decode(Response.self, from: data).user
-    }
-
-    func logout() async throws {
-        _ = try await self.request("/api/logout", options: WADRequestOptions(method: "POST"))
-    }
-
-    func channels() async throws -> [WADChatChannel] {
-        struct Response: Decodable { let channels: [WADChatChannel] }
-        let data = try await self.request("/api/chat/channels")
-        return try self.decode(Response.self, from: data).channels
-    }
-
-    func messages(channelId: String) async throws -> [WADChatMessage] {
-        struct Response: Decodable { let messages: [WADChatMessage] }
-        let encoded = channelId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? channelId
-        let data = try await self.request("/api/chat/messages?channel=\(encoded)")
-        return try self.decode(Response.self, from: data).messages
-    }
-
-    func send(channelId: String, body: String, replyTo: String? = nil) async throws -> WADChatMessage {
-        struct Response: Decodable { let message: WADChatMessage }
-        var payload: WADJSON = ["channel": channelId, "body": body]
-        if let replyTo { payload["reply_to"] = replyTo }
-        let data = try await self.request(
-            "/api/chat/messages",
-            options: WADRequestOptions(method: "POST", json: payload))
-        return try self.decode(Response.self, from: data).message
-    }
-
-    nonisolated func attachmentURL(_ id: String) -> URL? {
-        URL(string: self.baseURL + "/api/chat/attachments/\(id)")
-    }
-}
-
-private struct WADCurrentUser: Codable, Identifiable, Equatable {
-    let id: String
-    let name: String
-    let username: String?
-    let role: String?
-}
-
-private struct WADChatChannel: Codable, Identifiable, Equatable, Hashable {
-    let id: String
-    let name: String
-    let topic: String?
-    let agent: String?
-    let model: String?
-    let grp: String?
-    let lastAt: String?
-
-    static func sortByName(_ lhs: WADChatChannel, _ rhs: WADChatChannel) -> Bool {
-        lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-    }
-}
-
-private struct WADChatReplyPreview: Codable, Equatable {
-    let id: String
-    let userName: String
-    let kind: String
-    let body: String
-}
-
-private struct WADChatReaction: Codable, Equatable {
-    let emoji: String
-    let users: [String]
-    let count: Int
-}
-
-private struct WADChatAttachment: Codable, Identifiable, Equatable {
-    let id: String
-    let name: String
-    let mime: String
-    let size: Int
-
-    var isImage: Bool {
-        self.mime.hasPrefix("image/")
-    }
-}
-
-private struct WADChatMessage: Codable, Identifiable, Equatable {
-    let id: String
-    let channelId: String
-    let userId: String?
-    let userName: String
-    let body: String
-    let kind: String
-    let replyTo: String?
-    let pinned: Bool?
-    let createdAt: String
-    let reply: WADChatReplyPreview?
-    let reactions: [WADChatReaction]?
-    let attachments: [WADChatAttachment]?
-
-    var isAgent: Bool {
-        self.kind == "agent"
-    }
-
-    var isPinned: Bool {
-        self.pinned == true
-    }
-}
 
 private func wadParseTimestamp(_ value: String?) -> Date? {
     guard let value, !value.isEmpty else { return nil }
@@ -521,16 +296,25 @@ private struct WADChannelRow: View {
     }
 }
 
+private struct WADPendingImage: Identifiable, Equatable {
+    let id = UUID()
+    let data: Data
+    let preview: UIImage
+}
+
 private struct WADChatThreadView: View {
     let channel: WADChatChannel
     @EnvironmentObject private var state: WADChatState
 
     @State private var messages: [WADChatMessage] = []
+    @State private var busy: WADChatBusy?
     @State private var draft = ""
     @State private var error: String?
     @State private var sending = false
     @State private var replyTarget: WADChatMessage?
     @State private var pollTask: Task<Void, Never>?
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var pendingImages: [WADPendingImage] = []
 
     private let api = WADAPIClient.shared
 
@@ -550,12 +334,17 @@ private struct WADChatThreadView: View {
         .navigationTitle("#\(self.channel.name)")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            WADSiriDefaults.rememberLastChannel(id: self.channel.id, name: self.channel.name)
             await self.load(initial: true)
             self.startPolling()
         }
         .onDisappear {
             self.pollTask?.cancel()
             self.pollTask = nil
+        }
+        .onChange(of: self.photoItems) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            Task { await self.importPhotos(newValue) }
         }
     }
 
@@ -566,7 +355,11 @@ private struct WADChatThreadView: View {
                     ForEach(self.messages) { message in
                         WADMessageBubbleView(message: message, isMine: self.isMine(message))
                             .id(message.id)
-                            .onTapGesture { self.replyTarget = message }
+                            .contextMenu { self.messageMenu(message) }
+                    }
+                    if let busy {
+                        WADTypingIndicatorView(agentName: self.channel.agent ?? "Agente", status: busy.status ?? "")
+                            .id("wad-typing")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -576,6 +369,39 @@ private struct WADChatThreadView: View {
                 if let last = self.messages.last?.id {
                     withAnimation { proxy.scrollTo(last, anchor: .bottom) }
                 }
+            }
+            .onChange(of: self.busy != nil) { _, isBusy in
+                if isBusy {
+                    withAnimation { proxy.scrollTo("wad-typing", anchor: .bottom) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func messageMenu(_ message: WADChatMessage) -> some View {
+        Section {
+            ForEach(["👍", "❤️", "😂", "✅", "👀", "🚀"], id: \.self) { emoji in
+                Button(emoji) {
+                    Task { await self.react(message, emoji: emoji) }
+                }
+            }
+        }
+        Button {
+            self.replyTarget = message
+        } label: {
+            Label("Rispondi", systemImage: "arrowshape.turn.up.left")
+        }
+        Button {
+            Task { await self.setPinned(message, pinned: !message.isPinned) }
+        } label: {
+            Label(message.isPinned ? "Sblocca" : "Fissa", systemImage: message.isPinned ? "pin.slash" : "pin")
+        }
+        if !message.body.isEmpty {
+            Button {
+                UIPasteboard.general.string = message.body
+            } label: {
+                Label("Copia testo", systemImage: "doc.on.doc")
             }
         }
     }
@@ -598,7 +424,41 @@ private struct WADChatThreadView: View {
                 }
                 .padding(.horizontal, 12)
             }
+            if !self.pendingImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(self.pendingImages) { image in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: image.preview)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 56, height: 56)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                Button {
+                                    self.pendingImages.removeAll { $0.id == image.id }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                }
+                                .offset(x: 5, y: -5)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+                }
+            }
             HStack(spacing: 8) {
+                PhotosPicker(
+                    selection: self.$photoItems,
+                    maxSelectionCount: 4,
+                    matching: .images)
+                {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.title3)
+                }
+                .disabled(self.sending)
                 TextField("Messaggio...", text: self.$draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
@@ -610,7 +470,7 @@ private struct WADChatThreadView: View {
                             .font(.title2)
                     }
                 }
-                .disabled(self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || self.sending)
+                .disabled(!self.canSend || self.sending)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -618,14 +478,31 @@ private struct WADChatThreadView: View {
         .background(.bar)
     }
 
+    private var canSend: Bool {
+        !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !self.pendingImages.isEmpty
+    }
+
     private func isMine(_ message: WADChatMessage) -> Bool {
         guard let userId = self.state.user?.id else { return false }
         return message.userId == userId
     }
 
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data)
+            else { continue }
+            let jpeg = image.jpegData(compressionQuality: 0.82) ?? data
+            self.pendingImages.append(WADPendingImage(data: jpeg, preview: image))
+        }
+        self.photoItems = []
+    }
+
     private func load(initial: Bool) async {
         do {
-            self.messages = try await self.api.messages(channelId: self.channel.id)
+            let snapshot = try await self.api.messages(channelId: self.channel.id)
+            self.messages = snapshot.messages
+            self.busy = snapshot.busy
             self.error = nil
         } catch {
             if initial || self.messages.isEmpty {
@@ -647,19 +524,94 @@ private struct WADChatThreadView: View {
 
     private func sendDraft() async {
         let body = self.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        let images = self.pendingImages
+        guard !body.isEmpty || !images.isEmpty else { return }
         self.sending = true
         defer { self.sending = false }
         do {
-            let message = try await self.api.send(channelId: self.channel.id, body: body, replyTo: self.replyTarget?.id)
+            let message = try await self.api.send(
+                channelId: self.channel.id,
+                body: body,
+                replyTo: self.replyTarget?.id,
+                withAttachments: !images.isEmpty)
+            if !images.isEmpty {
+                for (index, image) in images.enumerated() {
+                    try await self.api.uploadAttachment(
+                        messageId: message.id,
+                        name: "foto-\(index + 1).jpg",
+                        mime: "image/jpeg",
+                        data: image.data)
+                }
+                try await self.api.markReady(messageId: message.id)
+            }
             self.draft = ""
             self.replyTarget = nil
-            if !self.messages.contains(where: { $0.id == message.id }) {
-                self.messages.append(message)
-            }
+            self.pendingImages = []
+            await self.load(initial: false)
             self.error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "Invio fallito"
+        }
+    }
+
+    private func react(_ message: WADChatMessage, emoji: String) async {
+        do {
+            try await self.api.toggleReaction(messageId: message.id, emoji: emoji)
+            await self.load(initial: false)
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Reazione fallita"
+        }
+    }
+
+    private func setPinned(_ message: WADChatMessage, pinned: Bool) async {
+        do {
+            try await self.api.setPinned(messageId: message.id, pinned: pinned)
+            await self.load(initial: false)
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Operazione fallita"
+        }
+    }
+}
+
+private struct WADTypingIndicatorView: View {
+    let agentName: String
+    let status: String
+
+    @State private var phase = 0
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(self.agentName)
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.accentColor)
+                    HStack(spacing: 3) {
+                        ForEach(0..<3, id: \.self) { index in
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 5, height: 5)
+                                .opacity(self.phase == index ? 1 : 0.35)
+                        }
+                    }
+                }
+                if !self.status.isEmpty {
+                    Text(self.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
+            .padding(10)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Spacer(minLength: 40)
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                self.phase = (self.phase + 1) % 3
+            }
         }
     }
 }
