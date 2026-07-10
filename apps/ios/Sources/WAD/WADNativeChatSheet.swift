@@ -1,6 +1,7 @@
 import Foundation
 import PhotosUI
 import SwiftUI
+import UserNotifications
 
 private typealias WADChannelGroup = (group: String, channels: [WADChatChannel])
 
@@ -305,6 +306,7 @@ private struct WADPendingImage: Identifiable, Equatable {
 private struct WADChatThreadView: View {
     let channel: WADChatChannel
     @EnvironmentObject private var state: WADChatState
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var messages: [WADChatMessage] = []
     @State private var busy: WADChatBusy?
@@ -315,6 +317,8 @@ private struct WADChatThreadView: View {
     @State private var pollTask: Task<Void, Never>?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var pendingImages: [WADPendingImage] = []
+    @State private var seenMessageIds: Set<String> = []
+    @State private var notifiedMessageIds: Set<String> = []
 
     private let api = WADAPIClient.shared
 
@@ -501,6 +505,12 @@ private struct WADChatThreadView: View {
     private func load(initial: Bool) async {
         do {
             let snapshot = try await self.api.messages(channelId: self.channel.id)
+            if initial {
+                self.seenMessageIds = Set(snapshot.messages.map(\.id))
+            } else {
+                await self.notifyIfNeeded(for: snapshot.messages)
+                self.seenMessageIds.formUnion(snapshot.messages.map(\.id))
+            }
             self.messages = snapshot.messages
             self.busy = snapshot.busy
             self.error = nil
@@ -569,6 +579,42 @@ private struct WADChatThreadView: View {
             await self.load(initial: false)
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "Operazione fallita"
+        }
+    }
+
+    private func notifyIfNeeded(for messages: [WADChatMessage]) async {
+        guard self.scenePhase != .active else { return }
+        guard let myUserId = self.state.user?.id else { return }
+        let newMessages = messages.filter { message in
+            !self.seenMessageIds.contains(message.id)
+                && !self.notifiedMessageIds.contains(message.id)
+                && message.userId != myUserId
+                && !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !newMessages.isEmpty else { return }
+
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+            || settings.authorizationStatus == .ephemeral
+        else { return }
+
+        for message in newMessages.suffix(3) {
+            let content = UNMutableNotificationContent()
+            content.title = "#\(self.channel.name) · \(message.userName)"
+            content.body = String(message.body.prefix(180))
+            content.sound = .default
+            content.userInfo = [
+                "wadChannelId": self.channel.id,
+                "wadMessageId": message.id,
+            ]
+            let request = UNNotificationRequest(
+                identifier: "wad-chat-\(message.id)",
+                content: content,
+                trigger: nil)
+            try? await center.add(request)
+            self.notifiedMessageIds.insert(message.id)
         }
     }
 }
