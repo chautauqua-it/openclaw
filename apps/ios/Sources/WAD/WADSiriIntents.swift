@@ -119,6 +119,60 @@ private enum WADSiriTarget {
     case lastOrFirst
 }
 
+private enum WADSiriChannels {
+    static func resolve(api: WADAPIClient, target: WADSiriTarget) async -> WADChannelEntity? {
+        switch target {
+        case let .explicit(channel):
+            return channel
+        case let .agent(agentName):
+            let normalized = agentName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let entities = await self.loadEntities(api: api)
+            return entities.first { entity in
+                entity.title.lowercased() == normalized && entity.id.hasPrefix("agent:")
+            } ?? entities.first { entity in
+                entity.title.lowercased() == normalized || entity.subtitle?.lowercased().contains(normalized) == true
+            }
+        case .lastOrFirst:
+            if let last = WADSiriDefaults.lastChannel() {
+                return WADChannelEntity(id: last.id, channelId: last.id, title: last.name, subtitle: nil)
+            }
+            let entities = await self.loadEntities(api: api)
+            return entities.first { !$0.id.hasPrefix("agent:") } ?? entities.first
+        }
+    }
+
+    static func loadEntities(api: WADAPIClient) async -> [WADChannelEntity] {
+        let cached = WADChannelEntity.fromCache()
+        if !cached.isEmpty { return cached }
+        _ = try? await api.channels()
+        return WADChannelEntity.fromCache()
+    }
+}
+
+private enum WADSiriText {
+    static func speakable(_ body: String) -> String {
+        var text = body
+        // Sostituisce i link markdown [testo](url) con il solo testo leggibile.
+        text = text.replacingOccurrences(
+            of: "\\[([^\\]]+)\\]\\([^\\)]+\\)",
+            with: "$1",
+            options: .regularExpression)
+        // Rimuove i marcatori di lista a inizio riga.
+        text = text.replacingOccurrences(
+            of: "(?m)^\\s*[-*•]\\s+",
+            with: "",
+            options: .regularExpression)
+        for token in ["**", "__", "`", "###", "##", "#", ">"] {
+            text = text.replacingOccurrences(of: token, with: "")
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count > 600 {
+            text = String(text.prefix(600)) + "… Il resto è in chat."
+        }
+        return text
+    }
+}
+
 private enum WADSiriAskRunner {
     static func ask(_ text: String, target: WADSiriTarget) async -> String {
         let api = WADAPIClient.shared
@@ -129,7 +183,7 @@ private enum WADSiriAskRunner {
             return "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login."
         }
 
-        guard let resolved = await self.resolveChannel(api: api, target: target) else {
+        guard let resolved = await WADSiriChannels.resolve(api: api, target: target) else {
             return "Non trovo un canale WAD. Apri la chat WAD almeno una volta e riprova."
         }
 
@@ -151,37 +205,9 @@ private enum WADSiriAskRunner {
             channelId: resolved.channelId,
             afterMessageId: sent.id)
         {
-            return "\(reply.userName) risponde: \(self.speakable(reply.body))"
+            return "\(reply.userName) risponde: \(WADSiriText.speakable(reply.body))"
         }
         return "Inviato su \(resolved.title). L'agente sta ancora lavorando: la risposta arriva in chat WAD."
-    }
-
-    private static func resolveChannel(api: WADAPIClient, target: WADSiriTarget) async -> WADChannelEntity? {
-        switch target {
-        case let .explicit(channel):
-            return channel
-        case let .agent(agentName):
-            let normalized = agentName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let entities = await self.loadEntities(api: api)
-            return entities.first { entity in
-                entity.title.lowercased() == normalized && entity.id.hasPrefix("agent:")
-            } ?? entities.first { entity in
-                entity.title.lowercased() == normalized || entity.subtitle?.lowercased().contains(normalized) == true
-            }
-        case .lastOrFirst:
-            if let last = WADSiriDefaults.lastChannel() {
-                return WADChannelEntity(id: last.id, channelId: last.id, title: last.name, subtitle: nil)
-            }
-            let entities = await self.loadEntities(api: api)
-            return entities.first { !$0.id.hasPrefix("agent:") } ?? entities.first
-        }
-    }
-
-    private static func loadEntities(api: WADAPIClient) async -> [WADChannelEntity] {
-        let cached = WADChannelEntity.fromCache()
-        if !cached.isEmpty { return cached }
-        _ = try? await api.channels()
-        return WADChannelEntity.fromCache()
     }
 
     private static func waitForAgentReply(
@@ -206,17 +232,31 @@ private enum WADSiriAskRunner {
         }
         return nil
     }
+}
 
-    private static func speakable(_ body: String) -> String {
-        var text = body
-        for token in ["**", "__", "`", "###", "##", "#"] {
-            text = text.replacingOccurrences(of: token, with: "")
+private enum WADSiriReadRunner {
+    static func readLatest(target: WADSiriTarget) async -> String {
+        let api = WADAPIClient.shared
+
+        do {
+            _ = try await api.me()
+        } catch {
+            return "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login."
         }
-        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.count > 600 {
-            text = String(text.prefix(600)) + "… Il resto è in chat."
+
+        guard let resolved = await WADSiriChannels.resolve(api: api, target: target) else {
+            return "Non trovo un canale WAD. Apri la chat WAD almeno una volta e riprova."
         }
-        return text
+
+        guard let snapshot = try? await api.messages(channelId: resolved.channelId) else {
+            return "Non riesco a leggere i messaggi di \(resolved.title). Controlla Tailscale e riprova."
+        }
+
+        guard let latest = snapshot.messages.last(where: { !$0.body.isEmpty }) else {
+            return "Non ci sono messaggi in \(resolved.title)."
+        }
+
+        return "\(latest.userName) su \(resolved.title): \(WADSiriText.speakable(latest.body))"
     }
 }
 
@@ -277,6 +317,45 @@ struct AskSpockIntent: AppIntent {
     }
 }
 
+struct ReadWADIntent: AppIntent {
+    static let title: LocalizedStringResource = "Leggi WAD"
+    static let description = IntentDescription("Legge ad alta voce l'ultimo messaggio di un canale WAD.")
+
+    @Parameter(title: "Canale o agente")
+    var canale: WADChannelEntity?
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Leggi l'ultimo messaggio di \(\.$canale)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let target: WADSiriTarget = if let canale {
+            .explicit(canale)
+        } else {
+            .lastOrFirst
+        }
+        return await .result(dialog: "\(WADSiriReadRunner.readLatest(target: target))")
+    }
+}
+
+struct ReadSpockIntent: AppIntent {
+    static let title: LocalizedStringResource = "Leggi Spock"
+    static let description = IntentDescription("Legge ad alta voce l'ultimo messaggio di Spock su WAD.")
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriReadRunner.readLatest(target: .agent("Spock")))")
+    }
+}
+
+struct ReadAletovIntent: AppIntent {
+    static let title: LocalizedStringResource = "Leggi Aletov"
+    static let description = IntentDescription("Legge ad alta voce l'ultimo messaggio di Aletov su WAD.")
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriReadRunner.readLatest(target: .agent("Aletov")))")
+    }
+}
+
 struct OpenWADChatIntent: AppIntent {
     static let title: LocalizedStringResource = "Apri Chat WAD"
     static let description = IntentDescription("Apre la chat nativa dei canali WAD.")
@@ -334,6 +413,37 @@ struct WADAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Spock",
             systemImageName: "person.wave.2.fill")
+
+        AppShortcut(
+            intent: ReadWADIntent(),
+            phrases: [
+                "Leggi \(.applicationName)",
+                "Leggimi \(.applicationName)",
+                "Cosa c'è di nuovo su \(.applicationName)",
+                "Leggi l'ultimo messaggio di \(\.$canale) su \(.applicationName)",
+            ],
+            shortTitle: "Leggi WAD",
+            systemImageName: "ear.badge.waveform")
+
+        AppShortcut(
+            intent: ReadSpockIntent(),
+            phrases: [
+                "Leggimi l'ultimo messaggio di Spock su \(.applicationName)",
+                "Cosa ha detto Spock su \(.applicationName)",
+                "Leggi Spock su \(.applicationName)",
+            ],
+            shortTitle: "Leggi Spock",
+            systemImageName: "ear.badge.waveform")
+
+        AppShortcut(
+            intent: ReadAletovIntent(),
+            phrases: [
+                "Leggimi l'ultimo messaggio di Aletov su \(.applicationName)",
+                "Cosa ha detto Aletov su \(.applicationName)",
+                "Leggi Aletov su \(.applicationName)",
+            ],
+            shortTitle: "Leggi Aletov",
+            systemImageName: "ear.badge.waveform")
 
         AppShortcut(
             intent: OpenWADChatIntent(),
