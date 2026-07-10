@@ -76,7 +76,6 @@ private final class WADChatState: ObservableObject {
 }
 
 struct WADNativeChatSheet: View {
-    @Environment(\.dismiss) private var dismiss
     @StateObject private var state = WADChatState()
 
     var body: some View {
@@ -93,15 +92,11 @@ struct WADNativeChatSheet: View {
                     .environmentObject(self.state)
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Chiudi") { self.dismiss() }
-            }
-        }
     }
 }
 
 private struct WADLoginView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var state: WADChatState
     @State private var username = ""
     @State private var password = ""
@@ -159,6 +154,13 @@ private struct WADLoginView: View {
                     .foregroundStyle(.tertiary)
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { self.dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Chiudi chat WAD")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { self.showSettings = true } label: {
                         Image(systemName: "gearshape")
@@ -175,6 +177,7 @@ private struct WADLoginView: View {
 }
 
 private struct WADChannelListView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var state: WADChatState
     @State private var channels: [WADChatChannel] = []
     @State private var error: String?
@@ -210,6 +213,13 @@ private struct WADChannelListView: View {
                     .environmentObject(self.state)
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { self.dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Chiudi chat WAD")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { self.showSettings = true } label: {
                         Image(systemName: "gearshape")
