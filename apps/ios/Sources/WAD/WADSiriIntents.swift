@@ -113,64 +113,78 @@ struct WADChannelEntityQuery: EntityQuery {
     }
 }
 
-struct AskWADIntent: AppIntent {
-    static let title: LocalizedStringResource = "Chiedi a WAD"
-    static let description = IntentDescription(
-        "Invia un messaggio a un canale WAD e legge la risposta dell'agente.")
+private enum WADSiriTarget {
+    case explicit(WADChannelEntity)
+    case agent(String)
+    case lastOrFirst
+}
 
-    @Parameter(title: "Canale o agente")
-    var canale: WADChannelEntity?
-
-    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere?")
-    var testo: String
-
-    static var parameterSummary: some ParameterSummary {
-        Summary("Chiedi \(\.$testo) a \(\.$canale)")
-    }
-
-    func perform() async throws -> some IntentResult & ProvidesDialog {
+private enum WADSiriAskRunner {
+    static func ask(_ text: String, target: WADSiriTarget) async -> String {
         let api = WADAPIClient.shared
 
         do {
             _ = try await api.me()
         } catch {
-            return .result(dialog: "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login.")
+            return "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login."
         }
 
-        guard let target = await self.resolveChannel(api: api) else {
-            return .result(dialog: "Non trovo un canale WAD. Apri la chat WAD almeno una volta e riprova.")
+        guard let resolved = await self.resolveChannel(api: api, target: target) else {
+            return "Non trovo un canale WAD. Apri la chat WAD almeno una volta e riprova."
         }
 
-        let body = self.testo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else {
-            return .result(dialog: "Non ho capito il messaggio da inviare.")
+            return "Non ho capito il messaggio da inviare."
         }
 
         let sent: WADChatMessage
         do {
-            sent = try await api.send(channelId: target.channelId, body: "🎤 " + body)
+            sent = try await api.send(channelId: resolved.channelId, body: "🎤 " + body)
         } catch {
             let reason = (error as? LocalizedError)?.errorDescription ?? "errore sconosciuto"
-            return .result(dialog: "Invio fallito: \(reason)")
+            return "Invio fallito: \(reason)"
         }
 
-        if let reply = await self.waitForAgentReply(api: api, channelId: target.channelId, afterMessageId: sent.id) {
-            return .result(dialog: "\(reply.userName) risponde: \(Self.speakable(reply.body))")
+        if let reply = await self.waitForAgentReply(
+            api: api,
+            channelId: resolved.channelId,
+            afterMessageId: sent.id)
+        {
+            return "\(reply.userName) risponde: \(self.speakable(reply.body))"
         }
-        return .result(
-            dialog: "Inviato su \(target.title). L'agente sta ancora lavorando: la risposta arriva in chat WAD.")
+        return "Inviato su \(resolved.title). L'agente sta ancora lavorando: la risposta arriva in chat WAD."
     }
 
-    private func resolveChannel(api: WADAPIClient) async -> WADChannelEntity? {
-        if let canale { return canale }
-        if let last = WADSiriDefaults.lastChannel() {
-            return WADChannelEntity(id: last.id, channelId: last.id, title: last.name, subtitle: nil)
+    private static func resolveChannel(api: WADAPIClient, target: WADSiriTarget) async -> WADChannelEntity? {
+        switch target {
+        case let .explicit(channel):
+            return channel
+        case let .agent(agentName):
+            let normalized = agentName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let entities = await self.loadEntities(api: api)
+            return entities.first { entity in
+                entity.title.lowercased() == normalized && entity.id.hasPrefix("agent:")
+            } ?? entities.first { entity in
+                entity.title.lowercased() == normalized || entity.subtitle?.lowercased().contains(normalized) == true
+            }
+        case .lastOrFirst:
+            if let last = WADSiriDefaults.lastChannel() {
+                return WADChannelEntity(id: last.id, channelId: last.id, title: last.name, subtitle: nil)
+            }
+            let entities = await self.loadEntities(api: api)
+            return entities.first { !$0.id.hasPrefix("agent:") } ?? entities.first
         }
-        let entities = await (try? WADChannelEntityQuery().suggestedEntities()) ?? []
-        return entities.first { !$0.id.hasPrefix("agent:") } ?? entities.first
     }
 
-    private func waitForAgentReply(
+    private static func loadEntities(api: WADAPIClient) async -> [WADChannelEntity] {
+        let cached = WADChannelEntity.fromCache()
+        if !cached.isEmpty { return cached }
+        _ = try? await api.channels()
+        return WADChannelEntity.fromCache()
+    }
+
+    private static func waitForAgentReply(
         api: WADAPIClient,
         channelId: String,
         afterMessageId: String) async -> WADChatMessage?
@@ -203,6 +217,63 @@ struct AskWADIntent: AppIntent {
             text = String(text.prefix(600)) + "… Il resto è in chat."
         }
         return text
+    }
+}
+
+struct AskWADIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi a WAD"
+    static let description = IntentDescription(
+        "Invia un messaggio a un canale WAD e legge la risposta dell'agente.")
+
+    @Parameter(title: "Canale o agente")
+    var canale: WADChannelEntity?
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi \(\.$testo) a \(\.$canale)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let target: WADSiriTarget = if let canale {
+            .explicit(canale)
+        } else {
+            .lastOrFirst
+        }
+        return await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: target))")
+    }
+}
+
+struct AskAletovIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi ad Aletov"
+    static let description = IntentDescription("Invia un messaggio ad Aletov su WAD e legge la risposta.")
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere ad Aletov?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi ad Aletov \(\.$testo)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: .agent("Aletov")))")
+    }
+}
+
+struct AskSpockIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi a Spock"
+    static let description = IntentDescription("Invia un messaggio a Spock su WAD e legge la risposta.")
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere a Spock?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi a Spock \(\.$testo)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: .agent("Spock")))")
     }
 }
 
@@ -243,6 +314,26 @@ struct WADAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Chiedi a WAD",
             systemImageName: "waveform.circle.fill")
+
+        AppShortcut(
+            intent: AskAletovIntent(),
+            phrases: [
+                "Chiedi ad Aletov su \(.applicationName)",
+                "Parla con Aletov su \(.applicationName)",
+                "Scrivi ad Aletov su \(.applicationName)",
+            ],
+            shortTitle: "Aletov",
+            systemImageName: "person.wave.2.fill")
+
+        AppShortcut(
+            intent: AskSpockIntent(),
+            phrases: [
+                "Chiedi a Spock su \(.applicationName)",
+                "Parla con Spock su \(.applicationName)",
+                "Scrivi a Spock su \(.applicationName)",
+            ],
+            shortTitle: "Spock",
+            systemImageName: "person.wave.2.fill")
 
         AppShortcut(
             intent: OpenWADChatIntent(),
