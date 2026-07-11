@@ -180,6 +180,7 @@ private struct WADChannelListView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var state: WADChatState
     @State private var channels: [WADChatChannel] = []
+    @State private var dmChannels: [WADChatChannel] = []
     @State private var error: String?
     @State private var loading = true
     @State private var showSettings = false
@@ -194,11 +195,22 @@ private struct WADChannelListView: View {
                 } else if let error, self.channels.isEmpty {
                     self.errorView(error)
                 } else {
-                    List(self.groupedChannels, id: \.group) { group in
-                        Section(group.group) {
-                            ForEach(group.channels) { channel in
-                                NavigationLink(value: channel) {
-                                    WADChannelRow(channel: channel)
+                    List {
+                        if !self.dmChannels.isEmpty {
+                            Section("Agenti") {
+                                ForEach(self.dmChannels) { channel in
+                                    NavigationLink(value: channel) {
+                                        WADAgentDMRow(channel: channel)
+                                    }
+                                }
+                            }
+                        }
+                        ForEach(self.groupedChannels, id: \.group) { group in
+                            Section(group.group) {
+                                ForEach(group.channels) { channel in
+                                    NavigationLink(value: channel) {
+                                        WADChannelRow(channel: channel)
+                                    }
                                 }
                             }
                         }
@@ -271,6 +283,52 @@ private struct WADChannelListView: View {
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "Errore di caricamento"
         }
+        await self.loadAgentDMs()
+    }
+
+    private func loadAgentDMs() async {
+        let agents = Set(self.channels.compactMap { channel -> String? in
+            guard let agent = channel.agent?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !agent.isEmpty else { return nil }
+            return agent
+        })
+        var dms: [WADChatChannel] = []
+        for agent in agents.sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }) {
+            guard let dm = try? await self.api.agentDM(agent.lowercased()) else { continue }
+            // name = nome agente: usato solo per la UI (titolo/righe), le API usano l'id.
+            dms.append(WADChatChannel(
+                id: dm.channel.id,
+                name: agent,
+                topic: dm.channel.topic,
+                agent: dm.channel.agent,
+                model: dm.channel.model,
+                grp: dm.channel.grp,
+                lastAt: nil))
+        }
+        self.dmChannels = dms
+    }
+}
+
+private struct WADAgentDMRow: View {
+    let channel: WADChatChannel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.fill")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.tint)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(self.channel.name)
+                    .font(.body.weight(.semibold))
+                Text("Messaggi diretti · anche via Siri")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 }
 
