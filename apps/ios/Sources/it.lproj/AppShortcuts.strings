@@ -1,0 +1,37 @@
+/* Frasi Siri per gli App Shortcut WAD (chiave = frase nel codice, valore = frase italiana).
+   Senza questo file il bundle non dichiara localizzazioni e Siri non matcha le frasi. */
+
+"Chiedi a ${applicationName}" = "Chiedi a ${applicationName}";
+"Chiedi a ${canale} su ${applicationName}" = "Chiedi a ${canale} su ${applicationName}";
+"Parla con ${canale} su ${applicationName}" = "Parla con ${canale} su ${applicationName}";
+"Scrivi a ${canale} su ${applicationName}" = "Scrivi a ${canale} su ${applicationName}";
+"Manda un messaggio su ${applicationName}" = "Manda un messaggio su ${applicationName}";
+
+"Chiedi ad Aletov su ${applicationName}" = "Chiedi ad Aletov su ${applicationName}";
+"Parla con Aletov su ${applicationName}" = "Parla con Aletov su ${applicationName}";
+"Scrivi ad Aletov su ${applicationName}" = "Scrivi ad Aletov su ${applicationName}";
+
+"Chiedi a Spock su ${applicationName}" = "Chiedi a Spock su ${applicationName}";
+"Parla con Spock su ${applicationName}" = "Parla con Spock su ${applicationName}";
+"Scrivi a Spock su ${applicationName}" = "Scrivi a Spock su ${applicationName}";
+
+"Leggi ${applicationName}" = "Leggi ${applicationName}";
+"Leggimi ${applicationName}" = "Leggimi ${applicationName}";
+"Cosa c'è di nuovo su ${applicationName}" = "Cosa c'è di nuovo su ${applicationName}";
+"Leggi l'ultimo messaggio di ${canale} su ${applicationName}" = "Leggi l'ultimo messaggio di ${canale} su ${applicationName}";
+
+"Leggimi l'ultimo messaggio di Spock su ${applicationName}" = "Leggimi l'ultimo messaggio di Spock su ${applicationName}";
+"Cosa ha detto Spock su ${applicationName}" = "Cosa ha detto Spock su ${applicationName}";
+"Leggi Spock su ${applicationName}" = "Leggi Spock su ${applicationName}";
+
+"Leggimi l'ultimo messaggio di Aletov su ${applicationName}" = "Leggimi l'ultimo messaggio di Aletov su ${applicationName}";
+"Cosa ha detto Aletov su ${applicationName}" = "Cosa ha detto Aletov su ${applicationName}";
+"Leggi Aletov su ${applicationName}" = "Leggi Aletov su ${applicationName}";
+
+"Apri Chat ${applicationName}" = "Apri Chat ${applicationName}";
+"Apri la chat ${applicationName}" = "Apri la chat ${applicationName}";
+"Mostra i canali ${applicationName}" = "Mostra i canali ${applicationName}";
+
+"Apri Agenti ${applicationName}" = "Apri Agenti ${applicationName}";
+"Chatta con gli agenti in ${applicationName}" = "Chatta con gli agenti in ${applicationName}";
+"Parla con gli agenti ${applicationName}" = "Parla con gli agenti ${applicationName}";
