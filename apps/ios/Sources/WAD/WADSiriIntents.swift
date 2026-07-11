@@ -126,6 +126,15 @@ private enum WADSiriChannels {
             return channel
         case let .agent(agentName):
             let normalized = agentName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Preferisce il thread DM dedicato: conversazione 1:1 sempre nello stesso
+            // posto, invece del primo canale a tema in ordine alfabetico.
+            if let dm = try? await api.agentDM(normalized) {
+                return WADChannelEntity(
+                    id: dm.channel.id,
+                    channelId: dm.channel.id,
+                    title: agentName.capitalized,
+                    subtitle: "messaggi diretti")
+            }
             let entities = await self.loadEntities(api: api)
             return entities.first { entity in
                 entity.title.lowercased() == normalized && entity.id.hasPrefix("agent:")
@@ -207,7 +216,10 @@ private enum WADSiriAskRunner {
         {
             return "\(reply.userName) risponde: \(WADSiriText.speakable(reply.body))"
         }
-        return "Inviato su \(resolved.title). L'agente sta ancora lavorando: la risposta arriva in chat WAD."
+        if case .agent = target {
+            return "Inviato a \(resolved.title), che sta ancora lavorando. Tra un po' dimmi «Leggi \(resolved.title)», oppure trovi la risposta nella chat WAD nel thread di \(resolved.title)."
+        }
+        return "Inviato su \(resolved.title). L'agente sta ancora lavorando: trovi la risposta nella chat WAD."
     }
 
     private static func waitForAgentReply(
@@ -215,8 +227,9 @@ private enum WADSiriAskRunner {
         channelId: String,
         afterMessageId: String) async -> WADChatMessage?
     {
-        // Siri concede un budget breve: ~20 secondi di polling, poi si rimanda alla chat.
-        for _ in 0..<10 {
+        // Siri concede un budget breve: ~24 secondi di polling, poi si rimanda alla chat.
+        var sawBusy = false
+        for _ in 0..<12 {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let snapshot = try? await api.messages(channelId: channelId) else { continue }
             if let index = snapshot.messages.firstIndex(where: { $0.id == afterMessageId }) {
@@ -225,8 +238,11 @@ private enum WADSiriAskRunner {
                     return reply
                 }
             }
-            if snapshot.busy == nil, snapshot.messages.contains(where: { $0.id == afterMessageId }) {
-                // Turno chiuso senza risposta testuale: inutile continuare ad aspettare.
+            if snapshot.busy != nil {
+                sawBusy = true
+            } else if sawBusy {
+                // Il turno era partito e si è chiuso senza risposta testuale: inutile aspettare.
+                // (Senza sawBusy NON si esce: subito dopo l'invio busy può non essere ancora settato.)
                 return nil
             }
         }

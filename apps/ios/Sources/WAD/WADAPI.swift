@@ -152,6 +152,13 @@ actor WADAPIClient {
         return channels
     }
 
+    /// Thread DM di un agente: il server lo crea pigramente alla prima richiesta.
+    func agentDM(_ agent: String) async throws -> WADAgentDMSnapshot {
+        let encoded = agent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? agent
+        let data = try await self.request("/api/agents/\(encoded)/dm")
+        return try self.decode(WADAgentDMSnapshot.self, from: data)
+    }
+
     func messages(channelId: String) async throws -> WADChatSnapshot {
         let encoded = channelId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? channelId
         let data = try await self.request("/api/chat/messages?channel=\(encoded)")
@@ -302,6 +309,13 @@ struct WADChatBusy: Codable, Equatable {
 }
 
 struct WADChatSnapshot: Decodable {
+    let messages: [WADChatMessage]
+    let busy: WADChatBusy?
+    let model: String?
+}
+
+struct WADAgentDMSnapshot: Decodable {
+    let channel: WADChatChannel
     let messages: [WADChatMessage]
     let busy: WADChatBusy?
     let model: String?
