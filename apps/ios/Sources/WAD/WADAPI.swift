@@ -1,3 +1,4 @@
+import AppIntents
 import Foundation
 
 enum WADAPIError: LocalizedError {
@@ -149,6 +150,9 @@ actor WADAPIClient {
         let data = try await self.request("/api/chat/channels")
         let channels = try self.decode(Response.self, from: data).channels
         WADChannelCache.store(channels)
+        // Ripubblica i valori dei parametri: senza, Siri non impara i nomi di
+        // canali/agenti usati nelle frasi parametriche degli AppShortcut.
+        WADAppShortcuts.updateAppShortcutParameters()
         return channels
     }
 

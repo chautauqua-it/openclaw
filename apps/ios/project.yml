@@ -4,6 +4,9 @@ options:
   deploymentTarget:
     iOS: "18.0"
   xcodeVersion: "16.0"
+  # Le frasi Siri degli AppShortcut sono in italiano: la lingua di sviluppo deve
+  # dichiarare "it", altrimenti iOS le scarta sui device impostati in italiano.
+  developmentLanguage: it
 
 settings:
   base:
@@ -97,8 +100,10 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         SUPPORTS_LIVE_ACTIVITIES: YES
-        ENABLE_APPINTENTS_METADATA: NO
-        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+        # Siri richiede il bundle Metadata.appintents: senza, le frasi AppShortcut
+        # non vengono registrate ("WAD non ha aggiunto il supporto per Siri").
+        ENABLE_APPINTENTS_METADATA: YES
+        ENABLE_APP_INTENTS_METADATA_GENERATION: YES
       configs:
         Debug:
           OPENCLAW_PUSH_TRANSPORT: direct
