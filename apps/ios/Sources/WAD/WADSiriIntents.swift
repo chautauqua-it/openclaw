@@ -416,6 +416,9 @@ struct WADAppShortcuts: AppShortcutsProvider {
                 "Chiedi ad Aletov su \(.applicationName)",
                 "Parla con Aletov su \(.applicationName)",
                 "Scrivi ad Aletov su \(.applicationName)",
+                "Di ad Aletov su \(.applicationName)",
+                "Dì ad Aletov su \(.applicationName)",
+                "Manda un messaggio ad Aletov su \(.applicationName)",
             ],
             shortTitle: "Aletov",
             systemImageName: "person.wave.2.fill")
@@ -426,6 +429,9 @@ struct WADAppShortcuts: AppShortcutsProvider {
                 "Chiedi a Spock su \(.applicationName)",
                 "Parla con Spock su \(.applicationName)",
                 "Scrivi a Spock su \(.applicationName)",
+                "Di a Spock su \(.applicationName)",
+                "Dì a Spock su \(.applicationName)",
+                "Manda un messaggio a Spock su \(.applicationName)",
             ],
             shortTitle: "Spock",
             systemImageName: "person.wave.2.fill")
