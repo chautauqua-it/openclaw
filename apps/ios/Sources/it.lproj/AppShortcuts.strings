@@ -10,10 +10,16 @@
 "Chiedi ad Aletov su ${applicationName}" = "Chiedi ad Aletov su ${applicationName}";
 "Parla con Aletov su ${applicationName}" = "Parla con Aletov su ${applicationName}";
 "Scrivi ad Aletov su ${applicationName}" = "Scrivi ad Aletov su ${applicationName}";
+"Di ad Aletov su ${applicationName}" = "Di ad Aletov su ${applicationName}";
+"Dì ad Aletov su ${applicationName}" = "Dì ad Aletov su ${applicationName}";
+"Manda un messaggio ad Aletov su ${applicationName}" = "Manda un messaggio ad Aletov su ${applicationName}";
 
 "Chiedi a Spock su ${applicationName}" = "Chiedi a Spock su ${applicationName}";
 "Parla con Spock su ${applicationName}" = "Parla con Spock su ${applicationName}";
 "Scrivi a Spock su ${applicationName}" = "Scrivi a Spock su ${applicationName}";
+"Di a Spock su ${applicationName}" = "Di a Spock su ${applicationName}";
+"Dì a Spock su ${applicationName}" = "Dì a Spock su ${applicationName}";
+"Manda un messaggio a Spock su ${applicationName}" = "Manda un messaggio a Spock su ${applicationName}";
 
 "Leggi ${applicationName}" = "Leggi ${applicationName}";
 "Leggimi ${applicationName}" = "Leggimi ${applicationName}";
