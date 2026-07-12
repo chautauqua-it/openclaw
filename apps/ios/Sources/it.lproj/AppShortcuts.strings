@@ -21,6 +21,30 @@
 "Dì a Spock su ${applicationName}" = "Dì a Spock su ${applicationName}";
 "Manda un messaggio a Spock su ${applicationName}" = "Manda un messaggio a Spock su ${applicationName}";
 
+"Chiedi a Gianlutov su ${applicationName}" = "Chiedi a Gianlutov su ${applicationName}";
+"Parla con Gianlutov su ${applicationName}" = "Parla con Gianlutov su ${applicationName}";
+"Scrivi a Gianlutov su ${applicationName}" = "Scrivi a Gianlutov su ${applicationName}";
+"Di a Gianlutov su ${applicationName}" = "Di a Gianlutov su ${applicationName}";
+"Dì a Gianlutov su ${applicationName}" = "Dì a Gianlutov su ${applicationName}";
+"Manda un messaggio a Gianlutov su ${applicationName}" = "Manda un messaggio a Gianlutov su ${applicationName}";
+
+"Chiedi a Elenova su ${applicationName}" = "Chiedi a Elenova su ${applicationName}";
+"Chiedi ad Elenova su ${applicationName}" = "Chiedi ad Elenova su ${applicationName}";
+"Parla con Elenova su ${applicationName}" = "Parla con Elenova su ${applicationName}";
+"Scrivi a Elenova su ${applicationName}" = "Scrivi a Elenova su ${applicationName}";
+"Scrivi ad Elenova su ${applicationName}" = "Scrivi ad Elenova su ${applicationName}";
+"Di a Elenova su ${applicationName}" = "Di a Elenova su ${applicationName}";
+"Dì a Elenova su ${applicationName}" = "Dì a Elenova su ${applicationName}";
+"Dì ad Elenova su ${applicationName}" = "Dì ad Elenova su ${applicationName}";
+"Manda un messaggio a Elenova su ${applicationName}" = "Manda un messaggio a Elenova su ${applicationName}";
+
+"Chiedi a Polpotov su ${applicationName}" = "Chiedi a Polpotov su ${applicationName}";
+"Parla con Polpotov su ${applicationName}" = "Parla con Polpotov su ${applicationName}";
+"Scrivi a Polpotov su ${applicationName}" = "Scrivi a Polpotov su ${applicationName}";
+"Di a Polpotov su ${applicationName}" = "Di a Polpotov su ${applicationName}";
+"Dì a Polpotov su ${applicationName}" = "Dì a Polpotov su ${applicationName}";
+"Manda un messaggio a Polpotov su ${applicationName}" = "Manda un messaggio a Polpotov su ${applicationName}";
+
 "Leggi ${applicationName}" = "Leggi ${applicationName}";
 "Leggimi ${applicationName}" = "Leggimi ${applicationName}";
 "Cosa c'è di nuovo su ${applicationName}" = "Cosa c'è di nuovo su ${applicationName}";
@@ -33,11 +57,3 @@
 "Leggimi l'ultimo messaggio di Aletov su ${applicationName}" = "Leggimi l'ultimo messaggio di Aletov su ${applicationName}";
 "Cosa ha detto Aletov su ${applicationName}" = "Cosa ha detto Aletov su ${applicationName}";
 "Leggi Aletov su ${applicationName}" = "Leggi Aletov su ${applicationName}";
-
-"Apri Chat ${applicationName}" = "Apri Chat ${applicationName}";
-"Apri la chat ${applicationName}" = "Apri la chat ${applicationName}";
-"Mostra i canali ${applicationName}" = "Mostra i canali ${applicationName}";
-
-"Apri Agenti ${applicationName}" = "Apri Agenti ${applicationName}";
-"Chatta con gli agenti in ${applicationName}" = "Chatta con gli agenti in ${applicationName}";
-"Parla con gli agenti ${applicationName}" = "Parla con gli agenti ${applicationName}";

@@ -333,6 +333,54 @@ struct AskSpockIntent: AppIntent {
     }
 }
 
+struct AskGianlutovIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi a Gianlutov"
+    static let description = IntentDescription("Invia un messaggio a Gianlutov su WAD e legge la risposta.")
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere a Gianlutov?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi a Gianlutov \(\.$testo)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: .agent("Gianlutov")))")
+    }
+}
+
+struct AskElenovaIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi a Elenova"
+    static let description = IntentDescription("Invia un messaggio a Elenova su WAD e legge la risposta.")
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere a Elenova?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi a Elenova \(\.$testo)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: .agent("Elenova")))")
+    }
+}
+
+struct AskPolpotovIntent: AppIntent {
+    static let title: LocalizedStringResource = "Chiedi a Polpotov"
+    static let description = IntentDescription("Invia un messaggio a Polpotov su WAD e legge la risposta.")
+
+    @Parameter(title: "Messaggio", requestValueDialog: "Cosa vuoi chiedere a Polpotov?")
+    var testo: String
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Chiedi a Polpotov \(\.$testo)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        await .result(dialog: "\(WADSiriAskRunner.ask(self.testo, target: .agent("Polpotov")))")
+    }
+}
+
 struct ReadWADIntent: AppIntent {
     static let title: LocalizedStringResource = "Leggi WAD"
     static let description = IntentDescription("Legge ad alta voce l'ultimo messaggio di un canale WAD.")
@@ -437,6 +485,48 @@ struct WADAppShortcuts: AppShortcutsProvider {
             systemImageName: "person.wave.2.fill")
 
         AppShortcut(
+            intent: AskGianlutovIntent(),
+            phrases: [
+                "Chiedi a Gianlutov su \(.applicationName)",
+                "Parla con Gianlutov su \(.applicationName)",
+                "Scrivi a Gianlutov su \(.applicationName)",
+                "Di a Gianlutov su \(.applicationName)",
+                "Dì a Gianlutov su \(.applicationName)",
+                "Manda un messaggio a Gianlutov su \(.applicationName)",
+            ],
+            shortTitle: "Gianlutov",
+            systemImageName: "person.wave.2.fill")
+
+        AppShortcut(
+            intent: AskElenovaIntent(),
+            phrases: [
+                "Chiedi a Elenova su \(.applicationName)",
+                "Chiedi ad Elenova su \(.applicationName)",
+                "Parla con Elenova su \(.applicationName)",
+                "Scrivi a Elenova su \(.applicationName)",
+                "Scrivi ad Elenova su \(.applicationName)",
+                "Di a Elenova su \(.applicationName)",
+                "Dì a Elenova su \(.applicationName)",
+                "Dì ad Elenova su \(.applicationName)",
+                "Manda un messaggio a Elenova su \(.applicationName)",
+            ],
+            shortTitle: "Elenova",
+            systemImageName: "person.wave.2.fill")
+
+        AppShortcut(
+            intent: AskPolpotovIntent(),
+            phrases: [
+                "Chiedi a Polpotov su \(.applicationName)",
+                "Parla con Polpotov su \(.applicationName)",
+                "Scrivi a Polpotov su \(.applicationName)",
+                "Di a Polpotov su \(.applicationName)",
+                "Dì a Polpotov su \(.applicationName)",
+                "Manda un messaggio a Polpotov su \(.applicationName)",
+            ],
+            shortTitle: "Polpotov",
+            systemImageName: "person.wave.2.fill")
+
+        AppShortcut(
             intent: ReadWADIntent(),
             phrases: [
                 "Leggi \(.applicationName)",
@@ -466,25 +556,8 @@ struct WADAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Leggi Aletov",
             systemImageName: "ear.badge.waveform")
-
-        AppShortcut(
-            intent: OpenWADChatIntent(),
-            phrases: [
-                "Apri Chat \(.applicationName)",
-                "Apri la chat \(.applicationName)",
-                "Mostra i canali \(.applicationName)",
-            ],
-            shortTitle: "Chat WAD",
-            systemImageName: "text.bubble.fill")
-
-        AppShortcut(
-            intent: OpenWADAgentsIntent(),
-            phrases: [
-                "Apri Agenti \(.applicationName)",
-                "Chatta con gli agenti in \(.applicationName)",
-                "Parla con gli agenti \(.applicationName)",
-            ],
-            shortTitle: "Agenti WAD",
-            systemImageName: "person.2.wave.2.fill")
+        // Niente tile "Apri Chat/Agenti": Apple limita a 10 App Shortcut per app
+        // e i 5 agenti "Chiedi a..." hanno la priorità. Gli intent restano
+        // utilizzabili come azioni manuali in Comandi Rapidi.
     }
 }
