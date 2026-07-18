@@ -4,6 +4,7 @@ import SwiftUI
 /// talk daemon). Presented from the home toolbar microphone button.
 struct SpockTalkView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(NodeAppModel.self) private var appModel
     @State private var manager = SpockTalkManager()
 
     var accent: Color = .cyan
@@ -25,8 +26,14 @@ struct SpockTalkView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { self.manager.start() }
-        .onDisappear { self.manager.stop() }
+        .onAppear {
+            self.appModel.beginSpockTalkCapture()
+            self.manager.start()
+        }
+        .onDisappear {
+            self.manager.stop()
+            self.appModel.endSpockTalkCapture()
+        }
     }
 
     private var header: some View {

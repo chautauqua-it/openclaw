@@ -167,6 +167,7 @@ final class NodeAppModel {
     var lastAutoA2uiURL: String?
     private var pttVoiceWakeSuspended = false
     private var talkVoiceWakeSuspended = false
+    private var spockTalkSuspendedTalkMode = false
     private var backgroundVoiceWakeSuspended = false
     private var backgroundTalkSuspended = false
     private var backgroundTalkKeptActive = false
@@ -598,6 +599,26 @@ final class NodeAppModel {
             await self?.pushTalkModeToGateway(
                 enabled: enabled,
                 phase: enabled ? "enabled" : "disabled")
+        }
+    }
+
+    /// Spock talk needs exclusive microphone access: pause voice wake and talk
+    /// mode capture for the duration of the voice conversation.
+    func beginSpockTalkCapture() {
+        self.voiceWake.setSuppressedByTalk(true)
+        self.spockTalkSuspendedTalkMode = self.talkMode.suspendForBackground()
+    }
+
+    func endSpockTalkCapture() {
+        if self.spockTalkSuspendedTalkMode {
+            self.spockTalkSuspendedTalkMode = false
+            Task { [weak self] in
+                await self?.talkMode.resumeAfterBackground(wasSuspended: true)
+            }
+        }
+        // Keep voice wake suppressed when talk mode owns the mic anyway.
+        if !self.talkMode.isEnabled {
+            self.voiceWake.setSuppressedByTalk(false)
         }
     }
 
