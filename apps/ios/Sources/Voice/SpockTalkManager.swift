@@ -39,7 +39,7 @@ final class SpockTalkManager {
         }
     }
 
-    static let defaultServerURL = "http://100.99.99.96:40811"
+    static let defaultServerURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:40812"
 
     private let logger = Logger(subsystem: "ai.openclaw.node", category: "spock-talk")
     private var webSocket: URLSessionWebSocketTask?
