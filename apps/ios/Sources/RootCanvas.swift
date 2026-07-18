@@ -142,6 +142,7 @@ struct RootCanvas: View {
         }
         .fullScreenCover(isPresented: self.$showSpockTalk) {
             SpockTalkView(accent: self.appModel.seamColor)
+                .environment(self.appModel)
         }
         .fullScreenCover(isPresented: self.$showOnboarding) {
             OnboardingWizardView(

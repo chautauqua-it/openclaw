@@ -52,6 +52,7 @@ final class SpockTalkManager {
     private var playbackFormat: AVAudioFormat?
     private var responseActive = false
     private var pendingSpockText = ""
+    private var audioObservers: [NSObjectProtocol] = []
 
     private var serverBaseURL: URL {
         let raw = UserDefaults.standard.string(forKey: "spockTalk.serverURL") ?? Self.defaultServerURL
@@ -149,8 +150,19 @@ final class SpockTalkManager {
     private func startAudio() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try? session.setPreferredSampleRate(48000)
+        try? session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
+        self.installAudioObservers()
+        try self.startAudioGraph()
+    }
 
+    /// Builds (or rebuilds) the engine graph against the current hardware
+    /// formats. Called at start and again whenever CoreAudio reconfigures the
+    /// engine (route change, Bluetooth handshake): after such a change the old
+    /// tap/connection formats are stale and using them crashes with an
+    /// uncatchable NSException, so we always re-query and re-wire.
+    private func startAudioGraph() throws {
         guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
             throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
         }
@@ -188,19 +200,85 @@ final class SpockTalkManager {
         self.playerNode.play()
     }
 
-    private func teardownAudio() {
+    private func installAudioObservers() {
+        guard self.audioObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        self.audioObservers.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: self.audioEngine,
+            queue: .main)
+        { [weak self] _ in
+            Task { @MainActor in self?.handleEngineConfigurationChange() }
+        })
+        self.audioObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main)
+        { [weak self] note in
+            let typeRaw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            Task { @MainActor in self?.handleInterruption(typeRaw: typeRaw, optionsRaw: optionsRaw) }
+        })
+    }
+
+    private func removeAudioObservers() {
+        for observer in self.audioObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        self.audioObservers = []
+    }
+
+    private func handleEngineConfigurationChange() {
+        guard self.isActive else { return }
+        self.logger.info("audio engine configuration change; rebuilding graph")
+        self.rebuildAudioGraph(context: "cambio uscita audio")
+    }
+
+    private func handleInterruption(typeRaw: UInt?, optionsRaw: UInt) {
+        guard let typeRaw, let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else { return }
+        switch type {
+        case .began:
+            guard self.isActive else { return }
+            self.logger.info("audio session interruption began")
+            self.detachAudioGraph()
+        case .ended:
+            guard self.isActive else { return }
+            self.logger.info("audio session interruption ended (options \(optionsRaw))")
+            try? AVAudioSession.sharedInstance().setActive(true)
+            self.rebuildAudioGraph(context: "ripresa dopo interruzione")
+        @unknown default:
+            break
+        }
+    }
+
+    private func detachAudioGraph() {
         if self.inputTapInstalled {
             self.audioEngine.inputNode.removeTap(onBus: 0)
             self.inputTapInstalled = false
         }
         self.micSender = nil
-        self.playerNode.stop()
-        self.audioEngine.stop()
+        if self.playerNode.isPlaying { self.playerNode.stop() }
+        if self.audioEngine.isRunning { self.audioEngine.stop() }
+    }
+
+    private func rebuildAudioGraph(context: String) {
+        self.detachAudioGraph()
+        do {
+            try self.startAudioGraph()
+        } catch {
+            self.fail("Audio interrotto (\(context)): \(error.localizedDescription)")
+        }
+    }
+
+    private func teardownAudio() {
+        self.removeAudioObservers()
+        self.detachAudioGraph()
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     private func playAudioDelta(base64: String) {
-        guard let data = Data(base64Encoded: base64),
+        guard self.audioEngine.isRunning,
+              let data = Data(base64Encoded: base64),
               let format = self.playbackFormat,
               !data.isEmpty
         else { return }
@@ -262,8 +340,10 @@ final class SpockTalkManager {
             if self.isActive { self.phase = .listening }
         case "input_audio_buffer.speech_started":
             // Barge-in: flush queued Spock audio and cancel the active response.
-            self.playerNode.stop()
-            if self.audioEngine.isRunning { self.playerNode.play() }
+            if self.audioEngine.isRunning {
+                self.playerNode.stop()
+                self.playerNode.play()
+            }
             if self.responseActive {
                 self.send(json: ["type": "response.cancel"])
             }
