@@ -1,0 +1,402 @@
+import AVFAudio
+import Foundation
+import Observation
+import OSLog
+
+/// Realtime voice conversation with the Spock agent.
+///
+/// The app asks the Mac mini talk daemon (Tailscale-only) for a short-lived
+/// OpenAI Realtime client secret, then streams PCM16 24 kHz audio directly to
+/// OpenAI over WebSocket. Tool calls are proxied back to the daemon, so no
+/// long-lived API key ever reaches the device.
+@MainActor
+@Observable
+final class SpockTalkManager {
+    enum Phase: Equatable {
+        case idle
+        case connecting
+        case listening
+        case speaking
+        case error(String)
+    }
+
+    struct Line: Identifiable, Equatable {
+        let id = UUID()
+        var role: Role
+        var text: String
+
+        enum Role { case user, spock }
+    }
+
+    private(set) var phase: Phase = .idle
+    private(set) var lines: [Line] = []
+    var micLevel: Double = 0
+
+    var isActive: Bool {
+        switch self.phase {
+        case .idle, .error: false
+        default: true
+        }
+    }
+
+    static let defaultServerURL = "http://100.99.99.96:40811"
+
+    private let logger = Logger(subsystem: "ai.openclaw.node", category: "spock-talk")
+    private var webSocket: URLSessionWebSocketTask?
+    private var receiveTask: Task<Void, Never>?
+    private let audioEngine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private var playerAttached = false
+    private var inputTapInstalled = false
+    private var micSender: SpockMicSender?
+    private var playbackFormat: AVAudioFormat?
+    private var responseActive = false
+    private var pendingSpockText = ""
+
+    private var serverBaseURL: URL {
+        let raw = UserDefaults.standard.string(forKey: "spockTalk.serverURL") ?? Self.defaultServerURL
+        return URL(string: raw) ?? URL(string: Self.defaultServerURL)!
+    }
+
+    // MARK: - Lifecycle
+
+    func start() {
+        guard !self.isActive else { return }
+        self.phase = .connecting
+        self.lines = []
+        self.pendingSpockText = ""
+        Task { await self.connect() }
+    }
+
+    func stop() {
+        self.receiveTask?.cancel()
+        self.receiveTask = nil
+        self.webSocket?.cancel(with: .normalClosure, reason: nil)
+        self.webSocket = nil
+        self.teardownAudio()
+        self.responseActive = false
+        self.micLevel = 0
+        self.phase = .idle
+    }
+
+    private func fail(_ message: String) {
+        self.logger.error("spock talk failed: \(message, privacy: .public)")
+        self.stop()
+        self.phase = .error(message)
+    }
+
+    // MARK: - Connection
+
+    private struct MintResponse: Decodable {
+        var ok: Bool
+        var clientSecret: String?
+        var wsUrl: String?
+        var error: String?
+    }
+
+    private func connect() async {
+        let granted = await Self.requestMicPermission()
+        guard granted else {
+            self.fail("Permesso microfono negato: abilitalo in Impostazioni.")
+            return
+        }
+        let mint: MintResponse
+        do {
+            var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("session"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 12
+            let (data, _) = try await URLSession.shared.data(for: request)
+            mint = try JSONDecoder().decode(MintResponse.self, from: data)
+        } catch {
+            self.fail("Server voce non raggiungibile (Tailscale attivo?): \(error.localizedDescription)")
+            return
+        }
+        guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw) else {
+            self.fail(mint.error ?? "Il server voce non ha restituito un token.")
+            return
+        }
+
+        var wsRequest = URLRequest(url: wsURL)
+        wsRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        let task = URLSession.shared.webSocketTask(with: wsRequest)
+        self.webSocket = task
+        task.resume()
+
+        do {
+            try self.startAudio()
+        } catch {
+            self.fail("Audio non disponibile: \(error.localizedDescription)")
+            return
+        }
+
+        self.phase = .listening
+        self.receiveTask = Task { [weak self] in
+            await self?.receiveLoop(task)
+        }
+    }
+
+    private static func requestMicPermission() async -> Bool {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return true
+        case .denied: return false
+        default:
+            return await AVAudioApplication.requestRecordPermission()
+        }
+    }
+
+    // MARK: - Audio
+
+    private func startAudio() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setActive(true)
+
+        guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
+            throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
+        }
+        self.playbackFormat = playback
+        if !self.playerAttached {
+            self.audioEngine.attach(self.playerNode)
+            self.playerAttached = true
+        }
+        self.audioEngine.connect(self.playerNode, to: self.audioEngine.mainMixerNode, format: playback)
+
+        let input = self.audioEngine.inputNode
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw NSError(domain: "SpockTalk", code: 2, userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
+        }
+        guard let sender = SpockMicSender(inputFormat: inputFormat, webSocket: self.webSocket) else {
+            throw NSError(domain: "SpockTalk", code: 3, userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
+        }
+        sender.onLevel = { [weak self] level in
+            Task { @MainActor in
+                guard let self else { return }
+                let raw = max(0, min(Double(level) * 10.0, 1.0))
+                self.micLevel = (self.micLevel * 0.75) + (raw * 0.25)
+            }
+        }
+        self.micSender = sender
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
+            sender.handle(buffer)
+        }
+        self.inputTapInstalled = true
+
+        self.audioEngine.prepare()
+        try self.audioEngine.start()
+        self.playerNode.play()
+    }
+
+    private func teardownAudio() {
+        if self.inputTapInstalled {
+            self.audioEngine.inputNode.removeTap(onBus: 0)
+            self.inputTapInstalled = false
+        }
+        self.micSender = nil
+        self.playerNode.stop()
+        self.audioEngine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    private func playAudioDelta(base64: String) {
+        guard let data = Data(base64Encoded: base64),
+              let format = self.playbackFormat,
+              !data.isEmpty
+        else { return }
+        let sampleCount = data.count / 2
+        guard sampleCount > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleCount)),
+              let channel = buffer.floatChannelData?[0]
+        else { return }
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let samples = raw.bindMemory(to: Int16.self)
+            for i in 0..<sampleCount {
+                channel[i] = Float(Int16(littleEndian: samples[i])) / 32768.0
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(sampleCount)
+        if !self.playerNode.isPlaying, self.audioEngine.isRunning {
+            self.playerNode.play()
+        }
+        self.playerNode.scheduleBuffer(buffer)
+    }
+
+    // MARK: - Realtime events
+
+    private func receiveLoop(_ task: URLSessionWebSocketTask) async {
+        while !Task.isCancelled {
+            do {
+                let message = try await task.receive()
+                let text: String? = switch message {
+                case .string(let s): s
+                case .data(let d): String(data: d, encoding: .utf8)
+                @unknown default: nil
+                }
+                if let text { self.handleEvent(text) }
+            } catch {
+                if !Task.isCancelled, self.isActive {
+                    self.fail("Connessione voce interrotta: \(error.localizedDescription)")
+                }
+                return
+            }
+        }
+    }
+
+    private func handleEvent(_ raw: String) {
+        guard let data = raw.data(using: .utf8),
+              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = event["type"] as? String
+        else { return }
+
+        switch type {
+        case "response.output_audio.delta", "response.audio.delta":
+            if let delta = event["delta"] as? String {
+                self.phase = .speaking
+                self.playAudioDelta(base64: delta)
+            }
+        case "response.created":
+            self.responseActive = true
+        case "response.done":
+            self.responseActive = false
+            if self.isActive { self.phase = .listening }
+        case "input_audio_buffer.speech_started":
+            // Barge-in: flush queued Spock audio and cancel the active response.
+            self.playerNode.stop()
+            if self.audioEngine.isRunning { self.playerNode.play() }
+            if self.responseActive {
+                self.send(json: ["type": "response.cancel"])
+            }
+            self.phase = .listening
+        case "conversation.item.input_audio_transcription.completed":
+            if let transcript = (event["transcript"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !transcript.isEmpty
+            {
+                self.lines.append(Line(role: .user, text: transcript))
+            }
+        case "response.output_audio_transcript.delta", "response.audio_transcript.delta":
+            if let delta = event["delta"] as? String {
+                self.pendingSpockText += delta
+            }
+        case "response.output_audio_transcript.done", "response.audio_transcript.done":
+            let text = (event["transcript"] as? String ?? self.pendingSpockText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            self.pendingSpockText = ""
+            if !text.isEmpty {
+                self.lines.append(Line(role: .spock, text: text))
+            }
+        case "response.output_item.done":
+            if let item = event["item"] as? [String: Any],
+               item["type"] as? String == "function_call",
+               let name = item["name"] as? String,
+               let callId = item["call_id"] as? String
+            {
+                let arguments = item["arguments"] as? String ?? "{}"
+                Task { await self.runTool(name: name, arguments: arguments, callId: callId) }
+            }
+        case "error":
+            let message = ((event["error"] as? [String: Any])?["message"] as? String) ?? "errore realtime"
+            self.logger.error("realtime error: \(message, privacy: .public)")
+        default:
+            break
+        }
+    }
+
+    private func send(json: [String: Any]) {
+        guard let webSocket,
+              let data = try? JSONSerialization.data(withJSONObject: json),
+              let text = String(data: data, encoding: .utf8)
+        else { return }
+        webSocket.send(.string(text)) { _ in }
+    }
+
+    // MARK: - Tools
+
+    private func runTool(name: String, arguments: String, callId: String) async {
+        var output = "{\"ok\":false,\"error\":\"tool non raggiungibile\"}"
+        do {
+            var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("tool"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 10
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let parsedArgs = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) ?? [:]
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "arguments": parsedArgs])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let toolOutput = obj["output"],
+               let outData = try? JSONSerialization.data(withJSONObject: toolOutput)
+            {
+                output = String(data: outData, encoding: .utf8) ?? output
+            }
+        } catch {
+            self.logger.error("tool proxy error: \(error.localizedDescription, privacy: .public)")
+        }
+        self.send(json: [
+            "type": "conversation.item.create",
+            "item": [
+                "type": "function_call_output",
+                "call_id": callId,
+                "output": output,
+            ],
+        ])
+        self.send(json: ["type": "response.create"])
+    }
+}
+
+/// Converts mic buffers to PCM16 24 kHz mono and streams them to the realtime
+/// WebSocket. Runs on the audio tap thread; internally serialized by the tap.
+private final class SpockMicSender: @unchecked Sendable {
+    private let converter: AVAudioConverter
+    private let outputFormat: AVAudioFormat
+    private let webSocket: URLSessionWebSocketTask?
+    var onLevel: (@Sendable (Float) -> Void)?
+
+    init?(inputFormat: AVAudioFormat, webSocket: URLSessionWebSocketTask?) {
+        guard let output = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 24000,
+            channels: 1,
+            interleaved: true),
+            let converter = AVAudioConverter(from: inputFormat, to: output)
+        else { return nil }
+        self.outputFormat = output
+        self.converter = converter
+        self.webSocket = webSocket
+    }
+
+    func handle(_ buffer: AVAudioPCMBuffer) {
+        if let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+            var sum: Float = 0
+            let n = Int(buffer.frameLength)
+            for i in 0..<n { sum += channel[i] * channel[i] }
+            self.onLevel?(sqrtf(sum / Float(n)))
+        }
+
+        let ratio = self.outputFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(max(1, Double(buffer.frameLength) * ratio + 32))
+        guard let converted = AVAudioPCMBuffer(pcmFormat: self.outputFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var conversionError: NSError?
+        let status = self.converter.convert(to: converted, error: &conversionError) { _, outStatus in
+            if fed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        guard status != .error, conversionError == nil, converted.frameLength > 0,
+              let samples = converted.int16ChannelData?[0]
+        else { return }
+        let data = Data(bytes: samples, count: Int(converted.frameLength) * 2)
+        let payload: [String: String] = [
+            "type": "input_audio_buffer.append",
+            "audio": data.base64EncodedString(),
+        ]
+        guard let json = try? JSONSerialization.data(withJSONObject: payload),
+              let text = String(data: json, encoding: .utf8)
+        else { return }
+        self.webSocket?.send(.string(text)) { _ in }
+    }
+}

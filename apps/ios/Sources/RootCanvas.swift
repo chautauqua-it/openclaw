@@ -26,6 +26,7 @@ struct RootCanvas: View {
     @State private var didEvaluateOnboarding: Bool = false
     @State private var didAutoOpenSettings: Bool = false
     @State private var wadSiriLaunchSignal = WADSiriLaunchSignal.shared
+    @State private var showSpockTalk: Bool = false
 
     private enum PresentedSheet: Identifiable {
         case wadChat
@@ -100,7 +101,7 @@ struct RootCanvas: View {
                     self.openWADChannels()
                 },
                 openAgents: {
-                    self.presentedSheet = .agents
+                    self.showSpockTalk = true
                 },
                 openSettings: {
                     self.presentedSheet = .settings
@@ -138,6 +139,9 @@ struct RootCanvas: View {
                     .environment(self.appModel)
                     .environment(self.gatewayController)
             }
+        }
+        .fullScreenCover(isPresented: self.$showSpockTalk) {
+            SpockTalkView(accent: self.appModel.seamColor)
         }
         .fullScreenCover(isPresented: self.$showOnboarding) {
             OnboardingWizardView(
