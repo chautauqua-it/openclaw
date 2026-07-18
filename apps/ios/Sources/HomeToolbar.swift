@@ -39,8 +39,8 @@ struct HomeToolbar: View {
                         action: self.onChannelsTap)
 
                     HomeToolbarActionButton(
-                        systemImage: self.talkActive ? "person.wave.2.fill" : "person.wave.2",
-                        accessibilityLabel: "Agenti",
+                        systemImage: "mic.fill",
+                        accessibilityLabel: "Parla con Spock",
                         brighten: self.brighten,
                         tint: self.talkTint,
                         isActive: self.talkActive,
