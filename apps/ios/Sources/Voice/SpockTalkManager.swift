@@ -44,12 +44,7 @@ final class SpockTalkManager {
     private let logger = Logger(subsystem: "ai.openclaw.node", category: "spock-talk")
     private var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
-    private var playerAttached = false
-    private var inputTapInstalled = false
-    private var micSender: SpockMicSender?
-    private var playbackFormat: AVAudioFormat?
+    private let audio = SpockTalkAudioPipeline()
     private var responseActive = false
     private var pendingSpockText = ""
     private var audioObservers: [NSObjectProtocol] = []
@@ -124,7 +119,7 @@ final class SpockTalkManager {
         task.resume()
 
         do {
-            try self.startAudio()
+            try await self.startAudio()
         } catch {
             self.fail("Audio non disponibile: \(error.localizedDescription)")
             return
@@ -147,57 +142,16 @@ final class SpockTalkManager {
 
     // MARK: - Audio
 
-    private func startAudio() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-        try? session.setPreferredSampleRate(48000)
-        try? session.setPreferredIOBufferDuration(0.02)
-        try session.setActive(true)
+    private func startAudio() async throws {
         self.installAudioObservers()
-        try self.startAudioGraph()
-    }
-
-    /// Builds (or rebuilds) the engine graph against the current hardware
-    /// formats. Called at start and again whenever CoreAudio reconfigures the
-    /// engine (route change, Bluetooth handshake): after such a change the old
-    /// tap/connection formats are stale and using them crashes with an
-    /// uncatchable NSException, so we always re-query and re-wire.
-    private func startAudioGraph() throws {
-        guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
-            throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
-        }
-        self.playbackFormat = playback
-        if !self.playerAttached {
-            self.audioEngine.attach(self.playerNode)
-            self.playerAttached = true
-        }
-        self.audioEngine.connect(self.playerNode, to: self.audioEngine.mainMixerNode, format: playback)
-
-        let input = self.audioEngine.inputNode
-        let inputFormat = input.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw NSError(domain: "SpockTalk", code: 2, userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
-        }
-        guard let sender = SpockMicSender(inputFormat: inputFormat, webSocket: self.webSocket) else {
-            throw NSError(domain: "SpockTalk", code: 3, userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
-        }
-        sender.onLevel = { [weak self] level in
+        let webSocket = self.webSocket
+        try await self.audio.start(webSocket: webSocket, onLevel: { [weak self] level in
             Task { @MainActor in
                 guard let self else { return }
                 let raw = max(0, min(Double(level) * 10.0, 1.0))
                 self.micLevel = (self.micLevel * 0.75) + (raw * 0.25)
             }
-        }
-        self.micSender = sender
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
-            sender.handle(buffer)
-        }
-        self.inputTapInstalled = true
-
-        self.audioEngine.prepare()
-        try self.audioEngine.start()
-        self.playerNode.play()
+        })
     }
 
     private func installAudioObservers() {
@@ -205,7 +159,7 @@ final class SpockTalkManager {
         let center = NotificationCenter.default
         self.audioObservers.append(center.addObserver(
             forName: .AVAudioEngineConfigurationChange,
-            object: self.audioEngine,
+            object: self.audio.engine,
             queue: .main)
         { [weak self] _ in
             Task { @MainActor in self?.handleEngineConfigurationChange() }
@@ -240,64 +194,40 @@ final class SpockTalkManager {
         case .began:
             guard self.isActive else { return }
             self.logger.info("audio session interruption began")
-            self.detachAudioGraph()
+            self.audio.detachGraph()
         case .ended:
             guard self.isActive else { return }
             self.logger.info("audio session interruption ended (options \(optionsRaw))")
-            try? AVAudioSession.sharedInstance().setActive(true)
-            self.rebuildAudioGraph(context: "ripresa dopo interruzione")
+            self.rebuildAudioGraph(context: "ripresa dopo interruzione", reactivateSession: true)
         @unknown default:
             break
         }
     }
 
-    private func detachAudioGraph() {
-        if self.inputTapInstalled {
-            self.audioEngine.inputNode.removeTap(onBus: 0)
-            self.inputTapInstalled = false
-        }
-        self.micSender = nil
-        if self.playerNode.isPlaying { self.playerNode.stop() }
-        if self.audioEngine.isRunning { self.audioEngine.stop() }
-    }
-
-    private func rebuildAudioGraph(context: String) {
-        self.detachAudioGraph()
-        do {
-            try self.startAudioGraph()
-        } catch {
-            self.fail("Audio interrotto (\(context)): \(error.localizedDescription)")
+    private func rebuildAudioGraph(context: String, reactivateSession: Bool = false) {
+        let webSocket = self.webSocket
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.audio.rebuild(
+                    webSocket: webSocket,
+                    reactivateSession: reactivateSession,
+                    onLevel: { [weak self] level in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            let raw = max(0, min(Double(level) * 10.0, 1.0))
+                            self.micLevel = (self.micLevel * 0.75) + (raw * 0.25)
+                        }
+                    })
+            } catch {
+                self.fail("Audio interrotto (\(context)): \(error.localizedDescription)")
+            }
         }
     }
 
     private func teardownAudio() {
         self.removeAudioObservers()
-        self.detachAudioGraph()
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-    }
-
-    private func playAudioDelta(base64: String) {
-        guard self.audioEngine.isRunning,
-              let data = Data(base64Encoded: base64),
-              let format = self.playbackFormat,
-              !data.isEmpty
-        else { return }
-        let sampleCount = data.count / 2
-        guard sampleCount > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleCount)),
-              let channel = buffer.floatChannelData?[0]
-        else { return }
-        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            let samples = raw.bindMemory(to: Int16.self)
-            for i in 0..<sampleCount {
-                channel[i] = Float(Int16(littleEndian: samples[i])) / 32768.0
-            }
-        }
-        buffer.frameLength = AVAudioFrameCount(sampleCount)
-        if !self.playerNode.isPlaying, self.audioEngine.isRunning {
-            self.playerNode.play()
-        }
-        self.playerNode.scheduleBuffer(buffer)
+        self.audio.teardown()
     }
 
     // MARK: - Realtime events
@@ -331,7 +261,7 @@ final class SpockTalkManager {
         case "response.output_audio.delta", "response.audio.delta":
             if let delta = event["delta"] as? String {
                 self.phase = .speaking
-                self.playAudioDelta(base64: delta)
+                self.audio.play(base64: delta)
             }
         case "response.created":
             self.responseActive = true
@@ -340,10 +270,7 @@ final class SpockTalkManager {
             if self.isActive { self.phase = .listening }
         case "input_audio_buffer.speech_started":
             // Barge-in: flush queued Spock audio and cancel the active response.
-            if self.audioEngine.isRunning {
-                self.playerNode.stop()
-                self.playerNode.play()
-            }
+            self.audio.flushPlayback()
             if self.responseActive {
                 self.send(json: ["type": "response.cancel"])
             }
@@ -420,6 +347,159 @@ final class SpockTalkManager {
             ],
         ])
         self.send(json: ["type": "response.create"])
+    }
+}
+
+/// Owns the AVAudioEngine and performs every session/engine operation on a
+/// private serial queue, never on the main thread. AURemoteIO's Initialize
+/// performs a blocking RPC to the audio server that may need the caller's run
+/// loop to answer a callback: on the main thread this deadlocks for ~10 s and
+/// CoreAudio then aborts the process ("Initialize: RPC timeout. Apparently
+/// deadlocked."), which was the freeze-then-close crash of builds 21-24.
+private final class SpockTalkAudioPipeline: @unchecked Sendable {
+    let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let queue = DispatchQueue(label: "ai.openclaw.spocktalk.audio", qos: .userInitiated)
+    private var playerAttached = false
+    private var tapInstalled = false
+    private var micSender: SpockMicSender?
+    private var playbackFormat: AVAudioFormat?
+
+    func start(webSocket: URLSessionWebSocketTask?, onLevel: @escaping @Sendable (Float) -> Void) async throws {
+        try await self.run {
+            try self.startSessionLocked()
+            try self.startGraphLocked(webSocket: webSocket, onLevel: onLevel)
+        }
+    }
+
+    func rebuild(
+        webSocket: URLSessionWebSocketTask?,
+        reactivateSession: Bool,
+        onLevel: @escaping @Sendable (Float) -> Void) async throws
+    {
+        try await self.run {
+            self.detachGraphLocked()
+            if reactivateSession {
+                try? AVAudioSession.sharedInstance().setActive(true)
+            }
+            try self.startGraphLocked(webSocket: webSocket, onLevel: onLevel)
+        }
+    }
+
+    func detachGraph() {
+        self.queue.async { self.detachGraphLocked() }
+    }
+
+    func teardown() {
+        self.queue.async {
+            self.detachGraphLocked()
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        }
+    }
+
+    func play(base64: String) {
+        self.queue.async {
+            guard self.engine.isRunning,
+                  let data = Data(base64Encoded: base64),
+                  let format = self.playbackFormat,
+                  !data.isEmpty
+            else { return }
+            let sampleCount = data.count / 2
+            guard sampleCount > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleCount)),
+                  let channel = buffer.floatChannelData?[0]
+            else { return }
+            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                let samples = raw.bindMemory(to: Int16.self)
+                for i in 0..<sampleCount {
+                    channel[i] = Float(Int16(littleEndian: samples[i])) / 32768.0
+                }
+            }
+            buffer.frameLength = AVAudioFrameCount(sampleCount)
+            if !self.player.isPlaying, self.engine.isRunning {
+                self.player.play()
+            }
+            self.player.scheduleBuffer(buffer)
+        }
+    }
+
+    func flushPlayback() {
+        self.queue.async {
+            guard self.engine.isRunning else { return }
+            self.player.stop()
+            self.player.play()
+        }
+    }
+
+    private func run(_ body: @escaping () throws -> Void) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
+            self.queue.async {
+                do {
+                    try body()
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func startSessionLocked() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try? session.setPreferredSampleRate(48000)
+        try? session.setPreferredIOBufferDuration(0.02)
+        try session.setActive(true)
+    }
+
+    /// Builds (or rebuilds) the engine graph against the current hardware
+    /// formats. Called at start and again whenever CoreAudio reconfigures the
+    /// engine (route change, Bluetooth handshake): after such a change the old
+    /// tap/connection formats are stale and using them crashes with an
+    /// uncatchable NSException, so we always re-query and re-wire.
+    private func startGraphLocked(
+        webSocket: URLSessionWebSocketTask?,
+        onLevel: @escaping @Sendable (Float) -> Void) throws
+    {
+        guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
+            throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
+        }
+        self.playbackFormat = playback
+        if !self.playerAttached {
+            self.engine.attach(self.player)
+            self.playerAttached = true
+        }
+        self.engine.connect(self.player, to: self.engine.mainMixerNode, format: playback)
+
+        let input = self.engine.inputNode
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw NSError(domain: "SpockTalk", code: 2, userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
+        }
+        guard let sender = SpockMicSender(inputFormat: inputFormat, webSocket: webSocket) else {
+            throw NSError(domain: "SpockTalk", code: 3, userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
+        }
+        sender.onLevel = onLevel
+        self.micSender = sender
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
+            sender.handle(buffer)
+        }
+        self.tapInstalled = true
+
+        self.engine.prepare()
+        try self.engine.start()
+        self.player.play()
+    }
+
+    private func detachGraphLocked() {
+        if self.tapInstalled {
+            self.engine.inputNode.removeTap(onBus: 0)
+            self.tapInstalled = false
+        }
+        self.micSender = nil
+        if self.player.isPlaying { self.player.stop() }
+        if self.engine.isRunning { self.engine.stop() }
     }
 }
 

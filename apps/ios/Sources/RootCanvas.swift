@@ -154,6 +154,15 @@ struct RootCanvas: View {
                 .environment(self.appModel.voiceWake)
                 .environment(self.gatewayController)
         }
+        .onAppear {
+            // TEMP repro hook: auto-open Spock talk (bypasses onboarding/quick setup).
+            if ProcessInfo.processInfo.environment["SPOCK_TALK_AUTOOPEN"] == "1" {
+                self.didEvaluateOnboarding = true
+                self.didAutoOpenSettings = true
+                self.quickSetupDismissed = true
+                self.showSpockTalk = true
+            }
+        }
         .onAppear { self.updateIdleTimer() }
         .onAppear { self.updateHomeCanvasState() }
         .onAppear { self.evaluateOnboardingPresentation(force: false) }
