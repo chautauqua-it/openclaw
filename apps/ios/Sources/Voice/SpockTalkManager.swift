@@ -324,7 +324,9 @@ final class SpockTalkManager {
         do {
             var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("tool"))
             request.httpMethod = "POST"
-            request.timeoutInterval = 10
+            // ask_spock proxies to the real Spock agent and can take 10-120 s;
+            // a short timeout here makes the model report the tool as broken.
+            request.timeoutInterval = name == "ask_spock" ? 130 : 15
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let parsedArgs = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) ?? [:]
             request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "arguments": parsedArgs])
