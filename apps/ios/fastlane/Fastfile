@@ -238,10 +238,7 @@ def build_beta_release(context)
     archive_path: archive_path,
     output_directory: output_directory,
     output_name: "OpenClaw-#{version}.ipa",
-    # Pass ASC API key auth to the archive step too: automatic signing may need
-    # to regenerate a managed profile (e.g. push capability) and without auth
-    # xcodebuild falls back to Xcode accounts ("No Accounts" failure).
-    xcargs: export_xcargs,
+    xcargs: "-allowProvisioningUpdates",
     export_xcargs: export_xcargs,
     export_options: {
       signingStyle: "automatic"
