@@ -6,6 +6,7 @@ struct SpockTalkView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(NodeAppModel.self) private var appModel
     @State private var manager = SpockTalkManager()
+    @State private var copiedAll = false
 
     var accent: Color = .cyan
 
@@ -46,6 +47,25 @@ struct SpockTalkView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if !self.manager.lines.isEmpty {
+                Button {
+                    UIPasteboard.general.string = self.manager.lines
+                        .map { "\($0.role == .user ? "Io" : "Spock"): \($0.text)" }
+                        .joined(separator: "\n")
+                    withAnimation { self.copiedAll = true }
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        withAnimation { self.copiedAll = false }
+                    }
+                } label: {
+                    Image(systemName: self.copiedAll ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(.white.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Copia tutta la conversazione")
+            }
             Button {
                 self.manager.stop()
                 self.dismiss()
@@ -92,11 +112,19 @@ struct SpockTalkView: View {
             if line.role == .user { Spacer(minLength: 40) }
             Text(line.text)
                 .font(.callout)
+                .textSelection(.enabled)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .background {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(line.role == .user ? self.accent.opacity(0.22) : .white.opacity(0.08))
+                }
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = line.text
+                    } label: {
+                        Label("Copia", systemImage: "doc.on.doc")
+                    }
                 }
             if line.role == .spock { Spacer(minLength: 40) }
         }
