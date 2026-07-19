@@ -274,6 +274,17 @@ struct RootCanvas: View {
             self.presentedSheet = .agents
         case .chat:
             self.presentedSheet = .wadChat
+        case .spockTalk:
+            if self.presentedSheet != nil {
+                // SwiftUI non presenta un fullScreenCover mentre un sheet è ancora
+                // in dismissione: piccolo ritardo per lasciare chiudere l'animazione.
+                self.presentedSheet = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    self.showSpockTalk = true
+                }
+            } else {
+                self.showSpockTalk = true
+            }
         }
     }
 

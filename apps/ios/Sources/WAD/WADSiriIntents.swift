@@ -5,6 +5,7 @@ import Observation
 enum WADSiriRoute: String {
     case agents
     case chat
+    case spockTalk
 }
 
 @MainActor
@@ -444,6 +445,19 @@ struct OpenWADAgentsIntent: AppIntent {
     }
 }
 
+struct OpenSpockVoiceIntent: AppIntent {
+    static let title: LocalizedStringResource = "Avvia Spock vocale"
+    static let description = IntentDescription(
+        "Apre la conversazione vocale in tempo reale con Spock (mani libere, ideale in auto).")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        WADSiriLaunchSignal.shared.request(.spockTalk)
+        return .result()
+    }
+}
+
 struct WADAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -556,8 +570,19 @@ struct WADAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Leggi Aletov",
             systemImageName: "ear.badge.waveform")
-        // Niente tile "Apri Chat/Agenti": Apple limita a 10 App Shortcut per app
-        // e i 5 agenti "Chiedi a..." hanno la priorità. Gli intent restano
-        // utilizzabili come azioni manuali in Comandi Rapidi.
+
+        AppShortcut(
+            intent: OpenSpockVoiceIntent(),
+            phrases: [
+                "Avvia Spock vocale su \(.applicationName)",
+                "Spock vocale su \(.applicationName)",
+                "Modalità voce su \(.applicationName)",
+                "Parla a voce con Spock su \(.applicationName)",
+            ],
+            shortTitle: "Spock vocale",
+            systemImageName: "waveform.circle.fill")
+        // Limite Apple: 10 App Shortcut per app — con "Spock vocale" siamo al pieno.
+        // Niente tile "Apri Chat/Agenti": gli intent restano utilizzabili come
+        // azioni manuali in Comandi Rapidi.
     }
 }
