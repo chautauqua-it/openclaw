@@ -362,6 +362,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.openclaw.spocktalk.audio", qos: .userInitiated)
     private var playerAttached = false
     private var tapInstalled = false
+    private var voiceProcessingEnabled = false
     private var micSender: SpockMicSender?
     private var playbackFormat: AVAudioFormat?
 
@@ -461,6 +462,20 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         webSocket: URLSessionWebSocketTask?,
         onLevel: @escaping @Sendable (Float) -> Void) throws
     {
+        // The .voiceChat session mode alone does not apply echo cancellation to
+        // an AVAudioEngine graph: without voice processing on the IO units the
+        // mic re-captures Spock's own speaker output and the model answers
+        // itself. Must be enabled while the engine is stopped, before wiring.
+        let input = self.engine.inputNode
+        if !self.voiceProcessingEnabled {
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                self.voiceProcessingEnabled = true
+            } catch {
+                // Unsupported (e.g. simulator): degrade to no AEC rather than fail.
+            }
+        }
+
         guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
             throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
         }
@@ -471,7 +486,6 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         }
         self.engine.connect(self.player, to: self.engine.mainMixerNode, format: playback)
 
-        let input = self.engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw NSError(domain: "SpockTalk", code: 2, userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
