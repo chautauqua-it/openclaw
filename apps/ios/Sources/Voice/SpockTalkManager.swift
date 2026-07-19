@@ -46,6 +46,7 @@ final class SpockTalkManager {
     private var receiveTask: Task<Void, Never>?
     private let audio = SpockTalkAudioPipeline()
     private var responseActive = false
+    private var pendingToolResponseCreate = false
     private var pendingSpockText = ""
     private var audioObservers: [NSObjectProtocol] = []
 
@@ -71,6 +72,7 @@ final class SpockTalkManager {
         self.webSocket = nil
         self.teardownAudio()
         self.responseActive = false
+        self.pendingToolResponseCreate = false
         self.micLevel = 0
         self.phase = .idle
     }
@@ -268,6 +270,13 @@ final class SpockTalkManager {
         case "response.done":
             self.responseActive = false
             if self.isActive { self.phase = .listening }
+            // A tool finished while another response was still active (e.g. we
+            // kept chatting while ask_spock ran): fire the deferred turn now,
+            // otherwise the tool answer would never be spoken.
+            if self.pendingToolResponseCreate {
+                self.pendingToolResponseCreate = false
+                self.send(json: ["type": "response.create"])
+            }
         case "input_audio_buffer.speech_started":
             // Barge-in: flush queued Spock audio and cancel the active response.
             self.audio.flushPlayback()
@@ -324,9 +333,11 @@ final class SpockTalkManager {
         do {
             var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("tool"))
             request.httpMethod = "POST"
-            // ask_spock proxies to the real Spock agent and can take 10-120 s;
-            // a short timeout here makes the model report the tool as broken.
-            request.timeoutInterval = name == "ask_spock" ? 130 : 15
+            // ask_spock proxies to the real Spock agent and can take minutes on
+            // heavy questions (finance/Excel); a short timeout here makes the
+            // model report the tool as broken. Must stay above the daemon's own
+            // execFile timeout so the daemon's fallback message wins.
+            request.timeoutInterval = name == "ask_spock" ? 190 : 15
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let parsedArgs = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) ?? [:]
             request.httpBody = try JSONSerialization.data(withJSONObject: ["name": name, "arguments": parsedArgs])
@@ -348,7 +359,11 @@ final class SpockTalkManager {
                 "output": output,
             ],
         ])
-        self.send(json: ["type": "response.create"])
+        if self.responseActive {
+            self.pendingToolResponseCreate = true
+        } else {
+            self.send(json: ["type": "response.create"])
+        }
     }
 }
 
