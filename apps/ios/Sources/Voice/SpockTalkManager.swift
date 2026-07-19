@@ -59,6 +59,7 @@ final class SpockTalkManager {
 
     func start() {
         guard !self.isActive else { return }
+        WADDeviceLog.shared.log("talk", "start modalità voce")
         self.phase = .connecting
         self.lines = []
         self.pendingSpockText = ""
@@ -66,6 +67,7 @@ final class SpockTalkManager {
     }
 
     func stop() {
+        if self.isActive { WADDeviceLog.shared.log("talk", "stop modalità voce") }
         self.receiveTask?.cancel()
         self.receiveTask = nil
         self.webSocket?.cancel(with: .normalClosure, reason: nil)
@@ -79,6 +81,7 @@ final class SpockTalkManager {
 
     private func fail(_ message: String) {
         self.logger.error("spock talk failed: \(message, privacy: .public)")
+        WADDeviceLog.shared.log("talk.error", message)
         self.stop()
         self.phase = .error(message)
     }
@@ -127,6 +130,7 @@ final class SpockTalkManager {
             return
         }
 
+        WADDeviceLog.shared.log("talk", "connesso: sessione realtime + audio avviati")
         self.phase = .listening
         self.receiveTask = Task { [weak self] in
             await self?.receiveLoop(task)
@@ -187,6 +191,7 @@ final class SpockTalkManager {
     private func handleEngineConfigurationChange() {
         guard self.isActive else { return }
         self.logger.info("audio engine configuration change; rebuilding graph")
+        WADDeviceLog.shared.log("talk.audio", "config change → rebuild grafo")
         self.rebuildAudioGraph(context: "cambio uscita audio")
     }
 
@@ -196,10 +201,12 @@ final class SpockTalkManager {
         case .began:
             guard self.isActive else { return }
             self.logger.info("audio session interruption began")
+            WADDeviceLog.shared.log("talk.audio", "interruzione sessione audio (began)")
             self.audio.detachGraph()
         case .ended:
             guard self.isActive else { return }
             self.logger.info("audio session interruption ended (options \(optionsRaw))")
+            WADDeviceLog.shared.log("talk.audio", "interruzione finita (options \(optionsRaw)) → rebuild")
             self.rebuildAudioGraph(context: "ripresa dopo interruzione", reactivateSession: true)
         @unknown default:
             break
@@ -313,6 +320,7 @@ final class SpockTalkManager {
         case "error":
             let message = ((event["error"] as? [String: Any])?["message"] as? String) ?? "errore realtime"
             self.logger.error("realtime error: \(message, privacy: .public)")
+            WADDeviceLog.shared.log("talk.realtime", "errore server: \(message)")
         default:
             break
         }
@@ -329,6 +337,8 @@ final class SpockTalkManager {
     // MARK: - Tools
 
     private func runTool(name: String, arguments: String, callId: String) async {
+        WADDeviceLog.shared.log("talk.tool", "\(name) avviato")
+        let toolStart = Date()
         var output = "{\"ok\":false,\"error\":\"tool non raggiungibile\"}"
         do {
             var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("tool"))
@@ -350,7 +360,11 @@ final class SpockTalkManager {
             }
         } catch {
             self.logger.error("tool proxy error: \(error.localizedDescription, privacy: .public)")
+            WADDeviceLog.shared.log("talk.tool", "\(name) errore proxy: \(error.localizedDescription)")
         }
+        WADDeviceLog.shared.log(
+            "talk.tool",
+            String(format: "%@ concluso in %.1fs (output %d char)", name, Date().timeIntervalSince(toolStart), output.count))
         self.send(json: [
             "type": "conversation.item.create",
             "item": [

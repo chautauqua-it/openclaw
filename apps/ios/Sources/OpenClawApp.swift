@@ -607,6 +607,7 @@ struct OpenClawApp: App {
 
     init() {
         Self.installUncaughtExceptionLogger()
+        WADDeviceLog.shared.start()
         GatewaySettingsStore.bootstrapPersistence()
         let appModel = NodeAppModel()
         OpenClawAppModelRegistry.appModel = appModel
@@ -627,6 +628,7 @@ struct OpenClawApp: App {
                     Task { await self.appModel.handleDeepLink(url: url) }
                 }
                 .onChange(of: self.scenePhase) { _, newValue in
+                    WADDeviceLog.shared.log("scene", String(describing: newValue))
                     self.appModel.setScenePhase(newValue)
                     self.gatewayController.setScenePhase(newValue)
                     self.appDelegate.scenePhaseChanged(newValue)
@@ -646,6 +648,8 @@ extension OpenClawApp {
             for line in exception.callStackSymbols {
                 NSLog("  %@", line)
             }
+            let stack = exception.callStackSymbols.prefix(12).joined(separator: " | ")
+            WADDeviceLog.shared.logCrashSync("\(exception.name.rawValue): \(reason) — \(stack)")
         }
     }
 }
