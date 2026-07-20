@@ -41,6 +41,9 @@ final class WADDeviceLog: @unchecked Sendable {
     private let pongLock = NSLock()
     private var lastPong = Date()
     private var hangReported: Date?
+    // In background iOS sospende il main run loop: senza questo flag il
+    // watchdog segnalerebbe falsi hang al rientro in foreground.
+    private var inBackground = false
 
     // Only touched on `queue`, so the non-Sendable formatter is safe here.
     private let isoFormatter: ISO8601DateFormatter = {
@@ -84,6 +87,29 @@ final class WADDeviceLog: @unchecked Sendable {
             queue: nil)
         { [weak self] _ in
             self?.log("app", "memory warning")
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: nil)
+        { [weak self] _ in
+            guard let self else { return }
+            self.pongLock.lock()
+            self.inBackground = true
+            self.hangReported = nil
+            self.pongLock.unlock()
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: nil)
+        { [weak self] _ in
+            guard let self else { return }
+            self.pongLock.lock()
+            self.inBackground = false
+            self.lastPong = Date()
+            self.hangReported = nil
+            self.pongLock.unlock()
         }
     }
 
@@ -208,11 +234,12 @@ final class WADDeviceLog: @unchecked Sendable {
             self.pongLock.lock()
             let silent = Date().timeIntervalSince(self.lastPong)
             let alreadyReported = self.hangReported != nil
-            if silent > 4, !alreadyReported {
+            let background = self.inBackground
+            if silent > 4, !alreadyReported, !background {
                 self.hangReported = self.lastPong
             }
             self.pongLock.unlock()
-            if silent > 4, !alreadyReported {
+            if silent > 4, !alreadyReported, !background {
                 // Logged from the watchdog queue: the main thread is stuck, but
                 // buffering + upload do not need it.
                 self.appendLocked(tag: "hang", msg: String(format: "main thread bloccato da %.1fs (UI congelata)", silent))

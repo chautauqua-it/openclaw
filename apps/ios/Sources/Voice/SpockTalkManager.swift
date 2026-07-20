@@ -354,7 +354,9 @@ final class SpockTalkManager {
             let (data, _) = try await URLSession.shared.data(for: request)
             if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let toolOutput = obj["output"],
-               let outData = try? JSONSerialization.data(withJSONObject: toolOutput)
+               // .fragmentsAllowed: l'output può essere una stringa/numero top-level,
+               // senza l'opzione la serializzazione fallisce e il tool risulta rotto
+               let outData = try? JSONSerialization.data(withJSONObject: toolOutput, options: [.fragmentsAllowed])
             {
                 output = String(data: outData, encoding: .utf8) ?? output
             }
