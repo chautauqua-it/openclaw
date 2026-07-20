@@ -30,6 +30,8 @@ final class SpockTalkManager {
 
     private(set) var phase: Phase = .idle
     private(set) var lines: [Line] = []
+    private(set) var isMuted = false
+    private(set) var holdMusicActive = false
     var micLevel: Double = 0
 
     var isActive: Bool {
@@ -75,8 +77,45 @@ final class SpockTalkManager {
         self.teardownAudio()
         self.responseActive = false
         self.pendingToolResponseCreate = false
+        self.isMuted = false
+        self.holdMusicActive = false
         self.micLevel = 0
         self.phase = .idle
+    }
+
+    // MARK: - Mute / hold music
+
+    /// Tap on the mic orb: mute or unmute the microphone. While muted the app
+    /// keeps receiving Spock audio but sends no mic audio, so server VAD never
+    /// triggers and the session just waits.
+    func toggleMute() {
+        self.setMuted(!self.isMuted)
+    }
+
+    func setMuted(_ muted: Bool) {
+        guard self.isActive, muted != self.isMuted else { return }
+        self.isMuted = muted
+        self.audio.setMicMuted(muted)
+        if muted {
+            // Drop any half-captured utterance so it does not fire later.
+            self.send(json: ["type": "input_audio_buffer.clear"])
+            self.micLevel = 0
+        }
+        WADDeviceLog.shared.log("talk", muted ? "microfono in muto" : "microfono riattivato")
+    }
+
+    private func startHoldMusic() {
+        guard !self.holdMusicActive else { return }
+        self.holdMusicActive = true
+        self.audio.startHoldMusic()
+        self.setMuted(true)
+    }
+
+    private func stopHoldMusic(unmute: Bool) {
+        guard self.holdMusicActive else { return }
+        self.holdMusicActive = false
+        self.audio.stopHoldMusic()
+        if unmute { self.setMuted(false) }
     }
 
     private func fail(_ message: String) {
@@ -338,6 +377,31 @@ final class SpockTalkManager {
 
     private func runTool(name: String, arguments: String, callId: String) async {
         WADDeviceLog.shared.log("talk.tool", "\(name) avviato")
+        // musica_attesa is app-local: it drives the hold-music player and the
+        // mic mute, no round trip to the daemon.
+        if name == "musica_attesa" {
+            let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any]
+            let attiva = args?["attiva"] as? Bool ?? true
+            if attiva {
+                self.startHoldMusic()
+            } else {
+                self.stopHoldMusic(unmute: true)
+            }
+            self.send(json: [
+                "type": "conversation.item.create",
+                "item": [
+                    "type": "function_call_output",
+                    "call_id": callId,
+                    "output": "{\"ok\":true,\"musica\":\(attiva)}",
+                ],
+            ])
+            if self.responseActive {
+                self.pendingToolResponseCreate = true
+            } else {
+                self.send(json: ["type": "response.create"])
+            }
+            return
+        }
         let toolStart = Date()
         var output = "{\"ok\":false,\"error\":\"tool non raggiungibile\"}"
         do {
@@ -367,6 +431,11 @@ final class SpockTalkManager {
         WADDeviceLog.shared.log(
             "talk.tool",
             String(format: "%@ concluso in %.1fs (output %d char)", name, Date().timeIntervalSince(toolStart), output.count))
+        // The long wait is over: stop the hold music and re-open the mic so
+        // the user can react to the spoken answer right away.
+        if name == "ask_spock" {
+            self.stopHoldMusic(unmute: true)
+        }
         self.send(json: [
             "type": "conversation.item.create",
             "item": [
@@ -392,8 +461,12 @@ final class SpockTalkManager {
 private final class SpockTalkAudioPipeline: @unchecked Sendable {
     let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let musicPlayer = AVAudioPlayerNode()
     private let queue = DispatchQueue(label: "ai.openclaw.spocktalk.audio", qos: .userInitiated)
     private var playerAttached = false
+    private var musicAttached = false
+    private var musicActive = false
+    private var micMuted = false
     private var tapInstalled = false
     private var voiceProcessingEnabled = false
     private var micSender: SpockMicSender?
@@ -427,6 +500,8 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
     func teardown() {
         self.queue.async {
             self.detachGraphLocked()
+            self.micMuted = false
+            self.musicActive = false
             try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         }
     }
@@ -463,6 +538,64 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
             self.player.stop()
             self.player.play()
         }
+    }
+
+    func setMicMuted(_ muted: Bool) {
+        self.queue.async {
+            self.micMuted = muted
+            self.micSender?.muted = muted
+        }
+    }
+
+    func startHoldMusic() {
+        self.queue.async {
+            self.musicActive = true
+            self.startMusicLocked()
+        }
+    }
+
+    func stopHoldMusic() {
+        self.queue.async {
+            self.musicActive = false
+            if self.musicPlayer.isPlaying { self.musicPlayer.stop() }
+        }
+    }
+
+    private func startMusicLocked() {
+        guard self.engine.isRunning, self.musicAttached, let format = self.playbackFormat,
+              let buffer = Self.makeHoldMusicBuffer(format: format)
+        else { return }
+        if self.musicPlayer.isPlaying { self.musicPlayer.stop() }
+        self.musicPlayer.scheduleBuffer(buffer, at: nil, options: [.loops])
+        self.musicPlayer.play()
+    }
+
+    /// Synthesized hold-music loop (soft plucked arpeggio) so no bundled audio
+    /// asset is needed: A-major pentatonic notes with harmonic overtones and an
+    /// exponential decay envelope, at low volume under the voice channel.
+    private static func makeHoldMusicBuffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let sampleRate = format.sampleRate
+        let notes: [Double] = [220.0, 277.18, 329.63, 440.0, 554.37, 440.0, 329.63, 277.18]
+        let noteDuration = 0.62
+        let frameCount = AVAudioFrameCount(Double(notes.count) * noteDuration * sampleRate)
+        guard frameCount > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+              let channel = buffer.floatChannelData?[0]
+        else { return nil }
+        let framesPerNote = Int(noteDuration * sampleRate)
+        for (index, freq) in notes.enumerated() {
+            let start = index * framesPerNote
+            for i in 0..<framesPerNote {
+                let t = Double(i) / sampleRate
+                let envelope = exp(-2.6 * t)
+                let sample = sin(2 * .pi * freq * t) * 0.7
+                    + sin(2 * .pi * freq * 2 * t) * 0.2
+                    + sin(2 * .pi * freq * 3 * t) * 0.08
+                channel[start + i] = Float(sample * envelope * 0.16)
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(notes.count * framesPerNote)
+        return buffer
     }
 
     private func run(_ body: @escaping () throws -> Void) async throws {
@@ -518,6 +651,11 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
             self.playerAttached = true
         }
         self.engine.connect(self.player, to: self.engine.mainMixerNode, format: playback)
+        if !self.musicAttached {
+            self.engine.attach(self.musicPlayer)
+            self.musicAttached = true
+        }
+        self.engine.connect(self.musicPlayer, to: self.engine.mainMixerNode, format: playback)
 
         let inputFormat = input.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -527,6 +665,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
             throw NSError(domain: "SpockTalk", code: 3, userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
         }
         sender.onLevel = onLevel
+        sender.muted = self.micMuted
         self.micSender = sender
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
@@ -537,6 +676,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         self.engine.prepare()
         try self.engine.start()
         self.player.play()
+        if self.musicActive { self.startMusicLocked() }
     }
 
     private func detachGraphLocked() {
@@ -546,6 +686,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         }
         self.micSender = nil
         if self.player.isPlaying { self.player.stop() }
+        if self.musicPlayer.isPlaying { self.musicPlayer.stop() }
         if self.engine.isRunning { self.engine.stop() }
     }
 }
@@ -557,6 +698,7 @@ private final class SpockMicSender: @unchecked Sendable {
     private let outputFormat: AVAudioFormat
     private let webSocket: URLSessionWebSocketTask?
     var onLevel: (@Sendable (Float) -> Void)?
+    var muted = false
 
     init?(inputFormat: AVAudioFormat, webSocket: URLSessionWebSocketTask?) {
         guard let output = AVAudioFormat(
@@ -572,6 +714,10 @@ private final class SpockMicSender: @unchecked Sendable {
     }
 
     func handle(_ buffer: AVAudioPCMBuffer) {
+        if self.muted {
+            self.onLevel?(0)
+            return
+        }
         if let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 {
             var sum: Float = 0
             let n = Int(buffer.frameLength)

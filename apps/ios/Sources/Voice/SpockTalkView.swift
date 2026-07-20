@@ -167,7 +167,10 @@ struct SpockTalkView: View {
                 .foregroundStyle(.white)
                 .symbolEffect(.pulse, isActive: self.manager.phase == .connecting)
         }
+        .contentShape(Circle())
+        .onTapGesture { self.manager.toggleMute() }
         .accessibilityLabel(self.statusText)
+        .accessibilityHint("Tocca per attivare o disattivare il microfono")
     }
 
     private var footer: some View {
@@ -178,38 +181,48 @@ struct SpockTalkView: View {
     }
 
     private var statusText: String {
+        if case .error = self.manager.phase { return "Errore" }
+        if self.manager.holdMusicActive { return "Musica d'attesa — microfono in muto" }
+        if self.manager.isMuted { return "Microfono in muto" }
         switch self.manager.phase {
-        case .idle: "Pronto"
-        case .connecting: "Connessione…"
-        case .listening: "Ti ascolto"
-        case .speaking: "Spock sta parlando"
-        case .error: "Errore"
+        case .idle: return "Pronto"
+        case .connecting: return "Connessione…"
+        case .listening: return "Ti ascolto"
+        case .speaking: return "Spock sta parlando"
+        case .error: return "Errore"
         }
     }
 
     private var footerText: String {
+        if case .error = self.manager.phase { return "" }
+        if self.manager.holdMusicActive { return "Tocca il microfono per riattivarlo." }
+        if self.manager.isMuted { return "Tocca il microfono per riattivarlo." }
         switch self.manager.phase {
-        case .listening: "Parla pure: puoi anche interromperlo."
-        case .speaking: "Parla per interrompere."
-        case .connecting: "Collegamento al Mac mini via Tailscale…"
-        default: ""
+        case .listening: return "Parla pure: puoi anche interromperlo. Tocca per il muto."
+        case .speaking: return "Parla per interrompere."
+        case .connecting: return "Collegamento al Mac mini via Tailscale…"
+        default: return ""
         }
     }
 
     private var orbIcon: String {
+        if case .error = self.manager.phase { return "exclamationmark.triangle" }
+        if self.manager.holdMusicActive { return "music.note" }
+        if self.manager.isMuted { return "mic.slash.fill" }
         switch self.manager.phase {
-        case .speaking: "waveform"
-        case .error: "exclamationmark.triangle"
-        default: "mic.fill"
+        case .speaking: return "waveform"
+        default: return "mic.fill"
         }
     }
 
     private var orbColor: Color {
+        if case .error = self.manager.phase { return .orange }
+        if self.manager.holdMusicActive { return .indigo }
+        if self.manager.isMuted { return .red }
         switch self.manager.phase {
-        case .speaking: self.accent
-        case .error: .orange
-        case .connecting: .gray
-        default: .green
+        case .speaking: return self.accent
+        case .connecting: return .gray
+        default: return .green
         }
     }
 }
