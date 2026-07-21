@@ -213,9 +213,23 @@ struct WADPhoneSheet: View {
     @StateObject private var phone = WADSipManager.shared
     @State private var number = ""
     @State private var now = Date()
+    @State private var idleTab: IdleTab = .dialer
+    @State private var contacts: [WADSipContact] = []
+    @State private var contactsLoaded = false
+
+    private enum IdleTab: Hashable {
+        case dialer
+        case directory
+    }
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private static let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+    private static let avatarColors: [Color] = [
+        Color(red: 0.49, green: 0.43, blue: 0.95), Color(red: 0.07, green: 0.63, blue: 0.48),
+        Color(red: 0.90, green: 0.54, blue: 0.18), Color(red: 0.23, green: 0.51, blue: 0.84),
+        Color(red: 0.84, green: 0.36, blue: 0.69), Color(red: 0.35, green: 0.65, blue: 0.65),
+        Color(red: 0.75, green: 0.34, blue: 0.31), Color(red: 0.54, green: 0.56, blue: 0.24),
+    ]
 
     var body: some View {
         NavigationStack {
@@ -234,7 +248,7 @@ struct WADPhoneSheet: View {
                 case .ringingOut, .inCall:
                     self.activeCallView
                 case .idle:
-                    self.dialerView
+                    self.idleView
                 }
                 Spacer(minLength: 0)
             }
@@ -326,6 +340,85 @@ struct WADPhoneSheet: View {
             .padding(.horizontal, 28)
         }
         .padding(.top, 20)
+    }
+
+    private var idleView: some View {
+        VStack(spacing: 16) {
+            Picker("Vista", selection: self.$idleTab) {
+                Text("Tastierino").tag(IdleTab.dialer)
+                Text("Rubrica").tag(IdleTab.directory)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 40)
+            if self.idleTab == .dialer {
+                self.dialerView
+            } else {
+                self.directoryView
+            }
+        }
+        .task { await self.loadContacts() }
+    }
+
+    private var directoryView: some View {
+        Group {
+            if self.contacts.isEmpty {
+                Text(self.contactsLoaded ? "Rubrica non disponibile" : "Carico la rubrica...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 26)
+            } else {
+                List(self.contacts) { contact in
+                    Button {
+                        self.phone.call(contact.ext)
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(Self.avatarColor(for: contact.name))
+                                Text(Self.initials(of: contact.name))
+                                    .font(.caption.weight(.heavy))
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(width: 36, height: 36)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(contact.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text("interno \(contact.ext)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "phone.fill")
+                                .font(.footnote)
+                                .foregroundStyle(self.phone.registered ? Color.green : Color.secondary)
+                        }
+                    }
+                    .disabled(!self.phone.registered)
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    private func loadContacts() async {
+        guard !self.contactsLoaded else { return }
+        do {
+            self.contacts = try await WADAPIClient.shared.sipDirectory()
+        } catch {
+            self.contacts = []
+        }
+        self.contactsLoaded = true
+    }
+
+    private static func initials(of name: String) -> String {
+        let parts = name.split(separator: " ").prefix(2).compactMap(\.first)
+        return String(parts).uppercased()
+    }
+
+    private static func avatarColor(for name: String) -> Color {
+        let sum = name.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        return self.avatarColors[sum % self.avatarColors.count]
     }
 
     private var dialerView: some View {
