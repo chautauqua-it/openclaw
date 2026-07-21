@@ -77,6 +77,11 @@ final class WADSipManager: ObservableObject {
         // CallKit possiede la sessione audio: linphone la attiva solo quando
         // CXProvider chiama didActivate (vedi WADCallCenter).
         core.callkitEnabled = true
+        // Su rete cellulare i CDR mostravano pacchetti uplink ogni ~40ms con burst
+        // di jitter (audio "a tratti" per chi ascolta): forza ptime 20ms e rate
+        // control adattivo.
+        core.uploadPtime = 20
+        core.adaptiveRateControlEnabled = true
 
         let delegate = CoreDelegateStub(
             onCallStateChanged: { [weak self] _, call, state, message in
@@ -259,6 +264,20 @@ final class WADSipManager: ObservableObject {
               let scalar = digit.unicodeScalars.first else { return }
         try? call.sendDtmf(dtmf: CChar(scalar.value))
     }
+
+    /// Trasferimento cieco: REFER verso il numero/interno indicato.
+    func transfer(to number: String) {
+        let num = number.filter { !$0.isWhitespace }
+        guard let call = self.currentCall, self.callState == .inCall, !num.isEmpty else { return }
+        do {
+            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.domain)")
+            try call.transferTo(referTo: address)
+            WADDeviceLog.shared.log("sip", "trasferimento verso \(num) inviato")
+        } catch {
+            self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
+            WADDeviceLog.shared.log("sip.error", "trasferimento verso \(num) fallito: \(error.localizedDescription)")
+        }
+    }
 }
 
 // MARK: - UI telefono
@@ -271,6 +290,8 @@ struct WADPhoneSheet: View {
     @State private var idleTab: IdleTab = .dialer
     @State private var contacts: [WADSipContact] = []
     @State private var contactsLoaded = false
+    @State private var transferMode = false
+    @State private var transferNumber = ""
 
     private enum IdleTab: Hashable {
         case dialer
@@ -323,6 +344,12 @@ struct WADPhoneSheet: View {
                 await self.phone.start()
             }
             .onReceive(self.timer) { self.now = $0 }
+            .onChange(of: self.phone.callState) { _, state in
+                if state != .inCall {
+                    self.transferMode = false
+                    self.transferNumber = ""
+                }
+            }
         }
     }
 
@@ -373,28 +400,90 @@ struct WADPhoneSheet: View {
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
             if self.phone.callState == .inCall {
-                self.keypad { self.phone.sendDTMF($0) }
-                    .padding(.horizontal, 46)
+                if self.transferMode {
+                    self.transferView
+                } else {
+                    self.keypad { self.phone.sendDTMF($0) }
+                        .padding(.horizontal, 46)
+                }
             }
-            HStack(spacing: 16) {
-                if self.phone.callState == .inCall {
-                    Button { self.phone.toggleMute() } label: {
-                        Label(self.phone.muted ? "Riattiva" : "Muta",
-                              systemImage: self.phone.muted ? "mic.slash.fill" : "mic.fill")
+            if !(self.transferMode && self.phone.callState == .inCall) {
+                HStack(spacing: 12) {
+                    if self.phone.callState == .inCall {
+                        Button { self.phone.toggleMute() } label: {
+                            Label(self.phone.muted ? "Riattiva" : "Muta",
+                                  systemImage: self.phone.muted ? "mic.slash.fill" : "mic.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        Button { self.transferMode = true } label: {
+                            Label("Trasf.", systemImage: "arrow.uturn.forward")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Button { self.phone.hangup() } label: {
+                        Label("Chiudi", systemImage: "phone.down.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
                 }
-                Button { self.phone.hangup() } label: {
-                    Label("Chiudi", systemImage: "phone.down.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .padding(.horizontal, 28)
             }
-            .padding(.horizontal, 28)
         }
         .padding(.top, 20)
+    }
+
+    private var transferView: some View {
+        VStack(spacing: 10) {
+            Text("Trasferisci la chiamata")
+                .font(.subheadline.weight(.semibold))
+            TextField("Numero o interno", text: self.$transferNumber)
+                .keyboardType(.phonePad)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 40)
+            if !self.contacts.isEmpty {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(self.contacts) { contact in
+                            Button { self.doTransfer(contact.ext) } label: {
+                                HStack {
+                                    Text(contact.name)
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    Text(contact.ext)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.horizontal, 40)
+                }
+                .frame(maxHeight: 190)
+            }
+            HStack(spacing: 12) {
+                Button("Annulla") {
+                    self.transferMode = false
+                    self.transferNumber = ""
+                }
+                .buttonStyle(.bordered)
+                Button("Trasferisci") { self.doTransfer(self.transferNumber) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(self.transferNumber.isEmpty)
+            }
+        }
+        .task { await self.loadContacts() }
+    }
+
+    private func doTransfer(_ target: String) {
+        self.phone.transfer(to: target)
+        self.transferMode = false
+        self.transferNumber = ""
     }
 
     private var idleView: some View {
