@@ -24,6 +24,8 @@ final class WADCallCenter: NSObject, ObservableObject {
 
     /// UUID della chiamata corrente lato CallKit. Una sola linea per volta.
     private var activeCallUUID: UUID?
+    /// True quando linphone ha davvero la chiamata SIP dietro lo squillo CallKit.
+    private var sipCallArrived = false
     /// Ultimo token VoIP ricevuto da PushKit; se arriva prima del login WAD lo
     /// ritentiamo appena la sessione diventa valida.
     private var currentToken: String?
@@ -73,6 +75,9 @@ final class WADCallCenter: NSObject, ObservableObject {
     func reportIncoming(callId: String?, from: String, displayName: String, completion: @escaping () -> Void) {
         let uuid = UUID()
         self.activeCallUUID = uuid
+        // callId == nil ⇒ la segnalazione parte da linphone (chiamata SIP già
+        // presente); da push invece la chiamata vera deve ancora arrivare.
+        self.sipCallArrived = (callId == nil)
         let update = CXCallUpdate()
         let title = displayName.isEmpty ? from : displayName
         update.remoteHandle = CXHandle(type: .generic, value: title.isEmpty ? "Sconosciuto" : title)
@@ -87,8 +92,22 @@ final class WADCallCenter: NSObject, ObservableObject {
             } else {
                 // Sveglia il SIP e recupera l'INVITE per questo call-id.
                 Task { @MainActor in await WADSipManager.shared.wakeForPush(callId: callId) }
+                self.scheduleGhostRingWatchdog(for: uuid)
             }
             completion()
+        }
+    }
+
+    /// Se entro il timeout la chiamata SIP vera non è arrivata (Mercurio non
+    /// ripropone l'INVITE a chi si registra in ritardo, o il chiamante ha già
+    /// riattaccato), chiudi lo squillo come "senza risposta" invece di lasciare
+    /// una suoneria fantasma a cui rispondere è impossibile.
+    private func scheduleGhostRingWatchdog(for uuid: UUID, timeout: UInt64 = 25) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
+            guard self.activeCallUUID == uuid, !self.sipCallArrived else { return }
+            self.activeCallUUID = nil
+            self.provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
         }
     }
 
@@ -97,12 +116,14 @@ final class WADCallCenter: NSObject, ObservableObject {
     /// linphone ha rilevato una chiamata in arrivo in foreground (senza push):
     /// se non l'abbiamo già segnalata via push, mostriamo comunque la UI di sistema.
     func sipReportedIncoming(from: String) {
+        self.sipCallArrived = true
         guard self.activeCallUUID == nil else { return }
         self.reportIncoming(callId: nil, from: from, displayName: from) {}
     }
 
     /// La chiamata è entrata in conversazione: informa CallKit (timer, stato).
     func sipCallConnected() {
+        self.sipCallArrived = true
         guard let uuid = self.activeCallUUID else { return }
         self.provider.reportOutgoingCall(with: uuid, connectedAt: Date())
     }
