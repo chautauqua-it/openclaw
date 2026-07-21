@@ -54,6 +54,10 @@ private enum IOSDeepLinkAgentPolicy {
 @Observable
 // swiftlint:disable type_body_length file_length
 final class NodeAppModel {
+    /// La scena CarPlay vive fuori dall'ambiente SwiftUI e deve poter sospendere
+    /// wake-word/talk-mode quando avvia la voce Spock dall'auto.
+    private(set) weak static var current: NodeAppModel?
+
     struct AgentDeepLinkPrompt: Identifiable, Equatable {
         let id: String
         let messagePreview: String
@@ -238,6 +242,7 @@ final class NodeAppModel {
         self.watchMessagingService = watchMessagingService
         self.talkMode = talkMode
         self.apnsDeviceTokenHex = UserDefaults.standard.string(forKey: Self.apnsDeviceTokenUserDefaultsKey)
+        Self.current = self
         self.restorePersistedWatchExecApprovalBridgeState()
         GatewayDiagnostics.bootstrap()
         GatewayDiagnostics.log("node app model: init start")

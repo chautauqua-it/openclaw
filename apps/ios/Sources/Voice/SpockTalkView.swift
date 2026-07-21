@@ -5,7 +5,9 @@ import SwiftUI
 struct SpockTalkView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(NodeAppModel.self) private var appModel
-    @State private var manager = SpockTalkManager()
+    // Istanza condivisa con CarPlay: se la conversazione è già attiva dall'auto
+    // la vista la mostra e la controlla invece di aprire un secondo engine audio.
+    @State private var manager = SpockTalkManager.shared
     @State private var copiedAll = false
 
     var accent: Color = .cyan
