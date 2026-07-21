@@ -226,6 +226,18 @@ actor WADAPIClient {
     nonisolated func attachmentURL(_ id: String) -> URL? {
         URL(string: self.baseURL + "/api/chat/attachments/\(id)")
     }
+
+    /// Credenziali SIP personali (interno Mercurio) per il telefono nativo.
+    func sipConfig() async throws -> WADSipConfig {
+        let data = try await self.request("/api/sip/config")
+        return try self.decode(WADSipConfig.self, from: data)
+    }
+}
+
+struct WADSipConfig: Codable, Equatable {
+    let domain: String
+    let ext: String
+    let password: String
 }
 
 /// Cache locale dei canali per suggerimenti Siri anche ad app fredda.
