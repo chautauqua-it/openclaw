@@ -29,19 +29,22 @@ struct WADRequestOptions: @unchecked Sendable {
     let login: Bool
     let rawBody: Data?
     let contentType: String?
+    let timeout: TimeInterval
 
     init(
         method: String = "GET",
         json: WADJSON? = nil,
         login: Bool = false,
         rawBody: Data? = nil,
-        contentType: String? = nil)
+        contentType: String? = nil,
+        timeout: TimeInterval = 30)
     {
         self.method = method
         self.json = json
         self.login = login
         self.rawBody = rawBody
         self.contentType = contentType
+        self.timeout = timeout
     }
 }
 
@@ -78,7 +81,7 @@ actor WADAPIClient {
         let url = try self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = options.method
-        request.timeoutInterval = 30
+        request.timeoutInterval = options.timeout
         if let json = options.json {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: json)
@@ -192,10 +195,20 @@ actor WADAPIClient {
             options: WADRequestOptions(method: "POST", rawBody: data, contentType: mime))
     }
 
-    func markReady(messageId: String) async throws {
+    func markReady(messageId: String, timeout: TimeInterval = 30) async throws {
         _ = try await self.request(
             "/api/chat/messages/\(messageId)/ready",
-            options: WADRequestOptions(method: "POST", json: [:]))
+            options: WADRequestOptions(method: "POST", json: [:], timeout: timeout))
+    }
+
+    /// Messaggio vocale: audio come allegato riproducibile; al /ready il server
+    /// trascrive con whisper e mette il testo nel body (timeout largo apposta).
+    func sendVoice(channelId: String, audio: Data, replyTo: String? = nil) async throws -> WADChatMessage {
+        let message = try await self.send(channelId: channelId, body: "", replyTo: replyTo, withAttachments: true)
+        let name = "vocale-\(Int(Date().timeIntervalSince1970)).m4a"
+        try await self.uploadAttachment(messageId: message.id, name: name, mime: "audio/mp4", data: audio)
+        try await self.markReady(messageId: message.id, timeout: 150)
+        return message
     }
 
     func setPinned(messageId: String, pinned: Bool) async throws {
@@ -279,6 +292,10 @@ struct WADChatAttachment: Codable, Identifiable, Equatable {
 
     var isImage: Bool {
         self.mime.hasPrefix("image/")
+    }
+
+    var isAudio: Bool {
+        self.mime.hasPrefix("audio/")
     }
 }
 
