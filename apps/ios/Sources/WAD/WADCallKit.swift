@@ -257,6 +257,10 @@ extension WADCallCenter: @preconcurrency CXProviderDelegate {
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         WADDeviceLog.shared.log("sip.callkit", "azione rispondi")
+        // linphone richiede la configurazione della AVAudioSession PRIMA di
+        // accept/invite quando CallKit gestisce l'audio: senza, su cold-launch
+        // da push il didActivate può non arrivare e la chiamata resta muta.
+        WADSipManager.shared.configureAudioSession()
         _ = WADSipManager.shared.answerFromCallKit()
         action.fulfill()
     }
@@ -270,6 +274,7 @@ extension WADCallCenter: @preconcurrency CXProviderDelegate {
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         WADDeviceLog.shared.log("sip.callkit", "azione start \(action.handle.value)")
+        WADSipManager.shared.configureAudioSession()
         WADSipManager.shared.call(action.handle.value)
         action.fulfill()
     }

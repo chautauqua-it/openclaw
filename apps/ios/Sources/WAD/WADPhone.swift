@@ -17,6 +17,12 @@ final class WADSipManager: ObservableObject {
         case inCall
     }
 
+    enum ConsultState: Equatable {
+        case none
+        case ringing
+        case connected
+    }
+
     @Published var configured = false
     @Published var registered = false
     @Published var callState: CallState = .idle
@@ -25,6 +31,8 @@ final class WADSipManager: ObservableObject {
     @Published var muted = false
     @Published var error: String?
     @Published var ext = ""
+    @Published var consultState: ConsultState = .none
+    @Published var consultRemote = ""
 
     /// CallKit: aggiornato dai cambi di stato SIP e usato per la UI di sistema.
     weak var callCenter: WADCallCenter?
@@ -35,6 +43,9 @@ final class WADSipManager: ObservableObject {
     private var domain = ""
     private var pickupCode = ""
     private var starting = false
+    private var audioSessionActive = false
+    private var audioSessionForced = false
+    private var consultCall: Call?
 
     /// Scarica le credenziali da WAD e registra l'interno. Riusabile: se le
     /// credenziali cambiano nel profilo, basta richiamarla.
@@ -142,6 +153,10 @@ final class WADSipManager: ObservableObject {
     }
 
     private func handleCallState(call: Call, state: Call.State, message: String) {
+        if call === self.consultCall {
+            self.handleConsultState(state: state, message: message)
+            return
+        }
         switch state {
         case .IncomingReceived, .PushIncomingReceived:
             guard self.currentCall == nil else {
@@ -162,9 +177,23 @@ final class WADSipManager: ObservableObject {
                 self.callStartedAt = Date()
                 WADDeviceLog.shared.log("sip.callkit", "chiamata connessa")
                 self.callCenter?.sipCallConnected()
+                self.scheduleAudioSessionSafetyNet()
             }
         case .End, .Released:
             WADDeviceLog.shared.log("sip.callkit", "chiamata terminata stato=\(state)")
+            if let consult = self.consultCall {
+                try? consult.terminate()
+                self.consultCall = nil
+                self.consultState = .none
+                self.consultRemote = ""
+            }
+            if self.audioSessionForced {
+                // L'attivazione l'abbiamo forzata noi, quindi CallKit non manderà
+                // il didDeactivate: chiudiamo noi la sessione audio.
+                self.core?.activateAudioSession(activated: false)
+                self.audioSessionForced = false
+                self.audioSessionActive = false
+            }
             self.finishCall()
             self.callCenter?.sipCallEnded()
         case .Error:
@@ -254,8 +283,30 @@ final class WADSipManager: ObservableObject {
         self.core?.processPushNotification(callId: callId)
     }
 
+    /// Prepara la AVAudioSession per linphone: da chiamare nei handler CallKit
+    /// prima di accept/invite (requisito linphone con callkitEnabled).
+    func configureAudioSession() {
+        self.core?.configureAudioSession()
+    }
+
+    /// Caso Laura 2026-07-21: cold-launch da push + pickup **201, CallKit non ha
+    /// mai chiamato didActivate → audio unit mai partita, chiamata muta nei due
+    /// sensi. Se entro 1.5s dalla connessione l'audio non è attivo, lo forziamo.
+    private func scheduleAudioSessionSafetyNet() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self, self.callState == .inCall, !self.audioSessionActive else { return }
+            WADDeviceLog.shared.log("sip.callkit", "audio activate mancante, forzo attivazione")
+            self.audioSessionForced = true
+            self.audioSessionActive = true
+            self.core?.activateAudioSession(activated: true)
+        }
+    }
+
     /// Attiva/disattiva la sessione audio linphone su richiesta di CallKit.
     func activateAudioSession(_ activated: Bool) {
+        self.audioSessionActive = activated
+        if activated { self.audioSessionForced = false }
         self.core?.activateAudioSession(activated: activated)
     }
 
@@ -276,6 +327,73 @@ final class WADSipManager: ObservableObject {
         } catch {
             self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
             WADDeviceLog.shared.log("sip.error", "trasferimento verso \(num) fallito: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Trasferimento assistito
+
+    /// Mette in attesa la chiamata principale e apre una consultazione verso
+    /// il destinatario del trasferimento.
+    func startAttendedTransfer(to number: String) {
+        let num = number.filter { !$0.isWhitespace }
+        guard let core = self.core, let call = self.currentCall, self.callState == .inCall,
+              !num.isEmpty, self.consultCall == nil else { return }
+        self.error = nil
+        do {
+            try call.pause()
+            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.domain)")
+            let params = try core.createCallParams(call: nil)
+            self.consultCall = core.inviteAddressWithParams(addr: address, params: params)
+            self.consultRemote = num
+            self.consultState = .ringing
+            WADDeviceLog.shared.log("sip", "trasferimento assistito: consulto \(num)")
+        } catch {
+            self.error = "Consultazione non avviabile: \(error.localizedDescription)"
+            self.consultCall = nil
+            self.consultState = .none
+            self.consultRemote = ""
+            try? call.resume()
+        }
+    }
+
+    /// Congiunge le due gambe: la chiamata principale (in attesa) viene
+    /// trasferita al destinatario della consultazione.
+    func completeAttendedTransfer() {
+        guard let main = self.currentCall, let consult = self.consultCall else { return }
+        do {
+            try main.transferToAnother(dest: consult)
+            WADDeviceLog.shared.log("sip", "trasferimento assistito completato verso \(self.consultRemote)")
+        } catch {
+            self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
+            WADDeviceLog.shared.log("sip.error", "trasferimento assistito fallito: \(error.localizedDescription)")
+        }
+    }
+
+    /// Annulla la consultazione e riprende la chiamata principale.
+    func cancelAttendedTransfer() {
+        guard let consult = self.consultCall else { return }
+        try? consult.terminate()
+        // il resume della principale avviene alla chiusura della consult
+    }
+
+    private func handleConsultState(state: Call.State, message: String) {
+        switch state {
+        case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
+            self.consultState = .ringing
+        case .Connected, .StreamsRunning:
+            self.consultState = .connected
+        case .End, .Released, .Error:
+            let failed = (state == .Error)
+            self.consultCall = nil
+            self.consultState = .none
+            self.consultRemote = ""
+            if failed { self.error = "Consultazione fallita: \(message)" }
+            // Se la principale è ancora viva (annullo o destinatario non
+            // raggiungibile) la riprendiamo; se il trasferimento è andato a
+            // buon fine sta terminando e il resume fallisce senza danni.
+            if let main = self.currentCall { try? main.resume() }
+        default:
+            break
         }
     }
 }
@@ -396,18 +514,21 @@ struct WADPhoneSheet: View {
         VStack(spacing: 14) {
             Text(self.phone.remote)
                 .font(.title2.bold())
-            Text(self.phone.callState == .ringingOut ? "Sto chiamando..." : self.elapsed)
+            Text(self.phone.callState == .ringingOut ? "Sto chiamando..."
+                : self.phone.consultState != .none ? "In attesa" : self.elapsed)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
             if self.phone.callState == .inCall {
-                if self.transferMode {
+                if self.phone.consultState != .none {
+                    self.consultView
+                } else if self.transferMode {
                     self.transferView
                 } else {
                     self.keypad { self.phone.sendDTMF($0) }
                         .padding(.horizontal, 46)
                 }
             }
-            if !(self.transferMode && self.phone.callState == .inCall) {
+            if !((self.transferMode || self.phone.consultState != .none) && self.phone.callState == .inCall) {
                 HStack(spacing: 12) {
                     if self.phone.callState == .inCall {
                         Button { self.phone.toggleMute() } label: {
@@ -447,7 +568,7 @@ struct WADPhoneSheet: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(self.contacts) { contact in
-                            Button { self.doTransfer(contact.ext) } label: {
+                            Button { self.transferNumber = contact.ext } label: {
                                 HStack {
                                     Text(contact.name)
                                         .font(.subheadline.weight(.semibold))
@@ -460,6 +581,7 @@ struct WADPhoneSheet: View {
                                 .padding(.horizontal, 12)
                             }
                             .buttonStyle(.bordered)
+                            .tint(self.transferNumber == contact.ext ? Color.accentColor : Color.secondary)
                         }
                     }
                     .padding(.horizontal, 40)
@@ -472,7 +594,10 @@ struct WADPhoneSheet: View {
                     self.transferNumber = ""
                 }
                 .buttonStyle(.bordered)
-                Button("Trasferisci") { self.doTransfer(self.transferNumber) }
+                Button("Diretto") { self.doTransfer(self.transferNumber) }
+                    .buttonStyle(.bordered)
+                    .disabled(self.transferNumber.isEmpty)
+                Button("Assistito") { self.doAttendedTransfer(self.transferNumber) }
                     .buttonStyle(.borderedProminent)
                     .disabled(self.transferNumber.isEmpty)
             }
@@ -480,8 +605,33 @@ struct WADPhoneSheet: View {
         .task { await self.loadContacts() }
     }
 
+    /// Consultazione in corso durante un trasferimento assistito.
+    private var consultView: some View {
+        VStack(spacing: 12) {
+            Text("Consulto \(self.phone.consultRemote)")
+                .font(.subheadline.weight(.semibold))
+            Text(self.phone.consultState == .connected ? "In linea con il destinatario" : "Squilla...")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button("Riprendi") { self.phone.cancelAttendedTransfer() }
+                    .buttonStyle(.bordered)
+                Button("Completa") { self.phone.completeAttendedTransfer() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(self.phone.consultState != .connected)
+            }
+        }
+        .padding(.top, 12)
+    }
+
     private func doTransfer(_ target: String) {
         self.phone.transfer(to: target)
+        self.transferMode = false
+        self.transferNumber = ""
+    }
+
+    private func doAttendedTransfer(_ target: String) {
+        self.phone.startAttendedTransfer(to: target)
         self.transferMode = false
         self.transferNumber = ""
     }
