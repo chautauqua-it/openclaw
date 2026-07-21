@@ -184,6 +184,7 @@ private struct WADChannelListView: View {
     @State private var error: String?
     @State private var loading = true
     @State private var showSettings = false
+    @State private var showPhone = false
 
     private let api = WADAPIClient.shared
 
@@ -233,6 +234,12 @@ private struct WADChannelListView: View {
                     .accessibilityLabel("Chiudi chat WAD")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { self.showPhone = true } label: {
+                        Image(systemName: "phone")
+                    }
+                    .accessibilityLabel("Telefono Mercurio")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { self.showSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
@@ -242,6 +249,9 @@ private struct WADChannelListView: View {
             .sheet(isPresented: self.$showSettings) {
                 WADChatSettingsView()
                     .environmentObject(self.state)
+            }
+            .sheet(isPresented: self.$showPhone) {
+                WADPhoneSheet()
             }
             .task { await self.load() }
         }

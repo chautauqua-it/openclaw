@@ -18,6 +18,10 @@ packages:
     path: ../shared/OpenClawKit
   Swabble:
     path: ../../Swabble
+  # stack SIP nativo (no WebRTC) per il telefono WAD/Mercurio; variante novideo = solo audio
+  linphonesw:
+    url: https://github.com/BelledonneCommunications/linphone-sdk-swift-ios.git
+    exactVersion: 5.5.12-novideo
 
 schemes:
   OpenClaw:
@@ -60,6 +64,8 @@ targets:
         product: OpenClawProtocol
       - package: Swabble
         product: SwabbleKit
+      - package: linphonesw
+        product: linphonesw
       - sdk: AppIntents.framework
     preBuildScripts:
       - name: SwiftFormat (lint)
