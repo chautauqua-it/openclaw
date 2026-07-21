@@ -50,9 +50,19 @@ final class WADSipManager: ObservableObject {
     /// Scarica le credenziali da WAD e registra l'interno. Riusabile: se le
     /// credenziali cambiano nel profilo, basta richiamarla.
     func start() async {
-        guard !self.starting else { return }
+        if self.starting {
+            WADDeviceLog.shared.log("sip.perf", "start richiesto mentre già in corso: attendo")
+            await self.waitForStartToFinish()
+            return
+        }
+        let startedAt = Date()
+        WADDeviceLog.shared.log("sip.perf", "start begin")
         self.starting = true
-        defer { self.starting = false }
+        defer {
+            self.starting = false
+            let elapsed = Date().timeIntervalSince(startedAt)
+            WADDeviceLog.shared.log("sip.perf", String(format: "start end %.2fs registered=%@", elapsed, self.registered ? "true" : "false"))
+        }
         let config: WADSipConfig
         do {
             config = try await WADAPIClient.shared.sipConfig()
@@ -80,9 +90,13 @@ final class WADSipManager: ObservableObject {
     }
 
     private func setUpCore(config: WADSipConfig) throws {
+        let startedAt = Date()
+        WADDeviceLog.shared.log("sip.perf", "setUpCore begin")
         self.tearDownCore()
         let factory = Factory.Instance
+        WADDeviceLog.shared.log("sip.perf", "createCore begin")
         let core = try factory.createCore(configPath: "", factoryConfigPath: "", systemContext: nil)
+        WADDeviceLog.shared.log("sip.perf", String(format: "createCore end %.2fs", Date().timeIntervalSince(startedAt)))
         core.autoIterateEnabled = true
         core.pushNotificationEnabled = false
         // CallKit possiede la sessione audio: linphone la attiva solo quando
@@ -118,7 +132,9 @@ final class WADSipManager: ObservableObject {
                 }
             })
         core.addDelegate(delegate: delegate)
+        WADDeviceLog.shared.log("sip.perf", "core.start begin")
         try core.start()
+        WADDeviceLog.shared.log("sip.perf", String(format: "core.start end %.2fs", Date().timeIntervalSince(startedAt)))
 
         let params = try core.createAccountParams()
         let identity = try factory.createAddress(addr: "sip:\(config.ext)@\(config.domain)")
@@ -136,6 +152,17 @@ final class WADSipManager: ObservableObject {
         core.defaultAccount = account
         self.core = core
         self.coreDelegate = delegate
+        WADDeviceLog.shared.log("sip.perf", String(format: "setUpCore end %.2fs", Date().timeIntervalSince(startedAt)))
+    }
+
+    private func waitForStartToFinish(timeout: TimeInterval = 10) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while self.starting, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if self.starting {
+            WADDeviceLog.shared.log("sip.perf", "start ancora in corso dopo \(Int(timeout))s")
+        }
     }
 
     private func tearDownCore() {
@@ -280,7 +307,11 @@ final class WADSipManager: ObservableObject {
     func wakeForPush(callId: String?) async {
         WADDeviceLog.shared.log("sip.callkit", "wakeForPush callId=\(callId ?? "-")")
         if self.core == nil { await self.start() }
-        self.core?.processPushNotification(callId: callId)
+        guard let core = self.core else {
+            WADDeviceLog.shared.log("sip.error", "wakeForPush senza core pronto")
+            return
+        }
+        core.processPushNotification(callId: callId)
     }
 
     /// Avvia il core se serve e attende la registrazione SIP: per le chiamate
@@ -290,6 +321,9 @@ final class WADSipManager: ObservableObject {
         let deadline = Date().addingTimeInterval(timeout)
         while !self.registered, Date() < deadline {
             try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        if !self.registered {
+            WADDeviceLog.shared.log("sip.error", "ensureRegistered timeout ext=\(self.ext)")
         }
         return self.registered
     }

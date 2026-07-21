@@ -56,7 +56,6 @@ targets:
         embed: true
       - target: OpenClawActivityWidget
         embed: true
-      - target: OpenClawWatchApp
       - package: OpenClawKit
       - package: OpenClawKit
         product: OpenClawChatUI
@@ -141,6 +140,7 @@ targets:
           UISceneConfigurations:
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: WADCarPlay
+                UISceneClassName: CPTemplateApplicationScene
                 UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).WADCarPlaySceneDelegate"
         UIBackgroundModes:
           - audio

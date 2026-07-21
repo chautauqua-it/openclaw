@@ -89,6 +89,8 @@
 				<dict>
 					<key>UISceneConfigurationName</key>
 					<string>WADCarPlay</string>
+					<key>UISceneClassName</key>
+					<string>CPTemplateApplicationScene</string>
 					<key>UISceneDelegateClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).WADCarPlaySceneDelegate</string>
 				</dict>
