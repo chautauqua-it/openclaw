@@ -135,7 +135,13 @@ targets:
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: false
+          # CarPlay richiede il supporto multi-scena (telefono + auto insieme);
+          # su iPhone non cambia nulla (multi-finestra resta solo iPad).
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneConfigurationName: WADCarPlay
+                UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).WADCarPlaySceneDelegate"
         UIBackgroundModes:
           - audio
           - remote-notification
