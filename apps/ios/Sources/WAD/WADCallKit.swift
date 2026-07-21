@@ -36,7 +36,10 @@ final class WADCallCenter: NSObject, ObservableObject {
         let config = CXProviderConfiguration()
         config.supportsVideo = false
         config.maximumCallsPerCallGroup = 1
-        config.maximumCallGroups = 1
+        // 2 gruppi: il push VoIP duplicato (chiamata già mostrata da linphone in
+        // foreground) deve poter fare un report "fantasma" che riesca — se il
+        // report fallisce iOS termina l'app (riavvio + "errore di chiamata").
+        config.maximumCallGroups = 2
         config.supportedHandleTypes = [.generic, .phoneNumber]
         config.includesCallsInRecents = true
         return config
@@ -74,14 +77,34 @@ final class WADCallCenter: NSObject, ObservableObject {
 
     /// Segnala a CallKit una chiamata in arrivo. DEVE essere invocata dentro il
     /// handler del push VoIP prima che ritorni, altrimenti iOS termina l'app.
-    func reportIncoming(callId: String?, from: String, displayName: String, completion: @escaping () -> Void) {
+    /// fromPush=false ⇒ la segnalazione parte da linphone (chiamata SIP già
+    /// presente in foreground); da push invece la chiamata vera deve ancora arrivare.
+    func reportIncoming(callId: String?, from: String, displayName: String, fromPush: Bool = true, completion: @escaping () -> Void) {
+        let title = displayName.isEmpty ? from : displayName
+        if fromPush, self.activeCallUUID != nil {
+            // Push duplicato: linphone (app in foreground, interno registrato) ha
+            // già segnalato questa chiamata a CallKit prima che il push arrivasse.
+            // Non toccare la chiamata vera; iOS esige comunque un report riuscito
+            // per ogni push VoIP, quindi segnaliamo una chiamata fantasma e la
+            // chiudiamo subito. Senza questo iOS termina l'app.
+            WADDeviceLog.shared.log("sip.callkit", "push duplicato (chiamata già attiva), report fantasma")
+            let ghost = UUID()
+            let update = CXCallUpdate()
+            update.remoteHandle = CXHandle(type: .generic, value: title.isEmpty ? "Sconosciuto" : title)
+            update.hasVideo = false
+            self.provider.reportNewIncomingCall(with: ghost, update: update) { error in
+                if let error {
+                    WADDeviceLog.shared.log("sip.callkit", "report fantasma fallito: \(error.localizedDescription)")
+                }
+                self.provider.reportCall(with: ghost, endedAt: Date(), reason: .answeredElsewhere)
+                completion()
+            }
+            return
+        }
         let uuid = UUID()
         self.activeCallUUID = uuid
-        // callId == nil ⇒ la segnalazione parte da linphone (chiamata SIP già
-        // presente); da push invece la chiamata vera deve ancora arrivare.
-        self.sipCallArrived = (callId == nil)
+        self.sipCallArrived = !fromPush
         let update = CXCallUpdate()
-        let title = displayName.isEmpty ? from : displayName
         update.remoteHandle = CXHandle(type: .generic, value: title.isEmpty ? "Sconosciuto" : title)
         update.hasVideo = false
         update.supportsDTMF = true
@@ -94,9 +117,13 @@ final class WADCallCenter: NSObject, ObservableObject {
                 self.activeCallUUID = nil
             } else {
                 WADDeviceLog.shared.log("sip.callkit", "report incoming ok callId=\(callId ?? "-") from=\(title)")
-                // Sveglia il SIP e recupera l'INVITE per questo call-id.
-                Task { @MainActor in await WADSipManager.shared.wakeForPush(callId: callId) }
-                self.scheduleGhostRingWatchdog(for: uuid)
+                if fromPush {
+                    // Sveglia il SIP e recupera l'INVITE per questo call-id. Solo
+                    // da push: se la segnalazione viene da linphone il SIP è già
+                    // sveglio e processPushNotification confonderebbe il core.
+                    Task { @MainActor in await WADSipManager.shared.wakeForPush(callId: callId) }
+                    self.scheduleGhostRingWatchdog(for: uuid)
+                }
             }
             completion()
         }
@@ -124,7 +151,7 @@ final class WADCallCenter: NSObject, ObservableObject {
         self.sipCallArrived = true
         WADDeviceLog.shared.log("sip.callkit", "linphone ha INVITE remote=\(from)")
         guard self.activeCallUUID == nil else { return }
-        self.reportIncoming(callId: nil, from: from, displayName: from) {}
+        self.reportIncoming(callId: nil, from: from, displayName: from, fromPush: false) {}
     }
 
     /// La chiamata è entrata in conversazione: informa CallKit (timer, stato).
