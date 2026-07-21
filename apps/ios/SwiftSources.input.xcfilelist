@@ -84,6 +84,7 @@ Sources/WAD/WADSiriIntents.swift
 ShareExtension/ShareViewController.swift
 ActivityWidget/OpenClawActivityWidgetBundle.swift
 ActivityWidget/OpenClawLiveActivity.swift
+IntentsExtension/IntentHandler.swift
 WatchExtension/Sources/OpenClawWatchApp.swift
 WatchExtension/Sources/WatchConnectivityReceiver.swift
 WatchExtension/Sources/WatchInboxStore.swift

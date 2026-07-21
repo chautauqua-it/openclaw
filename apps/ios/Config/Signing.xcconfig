@@ -10,8 +10,10 @@ OPENCLAW_WATCH_APP_BUNDLE_ID = ai.openclaw.client.watchkitapp
 OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ai.openclaw.client.watchkitapp.extension
 OPENCLAW_WATCH_CONTROL_WIDGET_BUNDLE_ID = ai.openclaw.client.watchkitapp.controlwidget
 OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ai.openclaw.client.activitywidget
+OPENCLAW_INTENTS_BUNDLE_ID = ai.openclaw.client.intents
 OPENCLAW_WATCH_APP_PROFILE =
 OPENCLAW_WATCH_EXTENSION_PROFILE =
+OPENCLAW_INTENTS_PROFILE =
 
 // Local contributors can override this by running scripts/ios-configure-signing.sh.
 // Keep include after defaults: xcconfig is evaluated top-to-bottom.

@@ -12,9 +12,11 @@ OPENCLAW_SHARE_BUNDLE_ID = ai.openclaw.client.share
 OPENCLAW_WATCH_APP_BUNDLE_ID = ai.openclaw.client.watchkitapp
 OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ai.openclaw.client.watchkitapp.extension
 OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ai.openclaw.client.activitywidget
+OPENCLAW_INTENTS_BUNDLE_ID = ai.openclaw.client.intents
 
 OPENCLAW_APP_PROFILE = ai.openclaw.client Development
 OPENCLAW_SHARE_PROFILE = ai.openclaw.client.share Development
+OPENCLAW_INTENTS_PROFILE =
 
 // Keep local includes after defaults: xcconfig is evaluated top-to-bottom,
 // so later assignments in local files override the defaults above.

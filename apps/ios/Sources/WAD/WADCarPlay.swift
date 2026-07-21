@@ -1,5 +1,6 @@
 import CarPlay
 import Foundation
+import Intents
 import UIKit
 
 // MARK: - Scena CarPlay del telefono WAD.
@@ -19,9 +20,13 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         self.interfaceController = interfaceController
         WADDeviceLog.shared.log("carplay", "scena connessa")
 
-        let phone = CPListTemplate(title: "Telefono", sections: [
-            CPListSection(items: [CPListItem(text: "Carico la rubrica…", detailText: nil)]),
-        ])
+        let phone = CPListTemplate(
+            title: "Telefono",
+            sections: [CPListSection(items: [CPListItem(text: "Carico la rubrica…", detailText: nil)])],
+            assistantCellConfiguration: CPAssistantCellConfiguration(
+                position: .top,
+                visibility: .always,
+                assistantAction: .startCall))
         phone.tabTitle = "Telefono"
         phone.tabImage = UIImage(systemName: "phone.fill")
 
