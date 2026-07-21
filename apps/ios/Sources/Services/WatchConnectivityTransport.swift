@@ -8,6 +8,7 @@ private struct WatchConnectivityTransportCallbacks {
     var execApprovalResolveHandler: (@Sendable (WatchExecApprovalResolveEvent) -> Void)?
     var execApprovalSnapshotRequestHandler: (@Sendable (WatchExecApprovalSnapshotRequestEvent) -> Void)?
     var talkUtteranceHandler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?
+    var talkAudioHandler: (@Sendable (WatchTalkAudioEvent) -> Void)?
 }
 
 private func sendReachableWatchMessage(_ payload: [String: Any], with session: WCSession) async throws {
@@ -99,6 +100,10 @@ final class WatchConnectivityTransport: NSObject, @unchecked Sendable {
 
     func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?) {
         self.updateCallbacks { $0.talkUtteranceHandler = handler }
+    }
+
+    func setTalkAudioHandler(_ handler: (@Sendable (WatchTalkAudioEvent) -> Void)?) {
+        self.updateCallbacks { $0.talkAudioHandler = handler }
     }
 
     func sendPayload(_ payload: [String: Any]) async throws -> WatchNotificationSendResult {
@@ -234,6 +239,16 @@ final class WatchConnectivityTransport: NSObject, @unchecked Sendable {
 
     private func emitTalkUtterance(_ event: WatchTalkUtteranceEvent) {
         guard let handler = self.callbacksSnapshot().talkUtteranceHandler else {
+            return
+        }
+        Task { @MainActor in
+            handler(event)
+        }
+    }
+
+    private func emitTalkAudio(_ event: WatchTalkAudioEvent) {
+        guard let handler = self.callbacksSnapshot().talkAudioHandler else {
+            try? FileManager.default.removeItem(at: event.fileURL)
             return
         }
         Task { @MainActor in
@@ -389,6 +404,37 @@ extension WatchConnectivityTransport: WCSessionDelegate {
         {
             self.emitTalkUtterance(event)
         }
+    }
+
+    func session(_: WCSession, didReceive file: WCSessionFile) {
+        let metadata = file.metadata ?? [:]
+        let type = (metadata["type"] as? String) ?? "unknown"
+        GatewayDiagnostics.log("watch messaging: didReceive file type=\(type)")
+        guard type == "watch.talkAudio",
+              let captureId = metadata["captureId"] as? String, !captureId.isEmpty
+        else {
+            return
+        }
+        // The system deletes file.fileURL as soon as this delegate returns:
+        // copy it synchronously before emitting the event.
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watch-talk-inbound-\(captureId).m4a")
+        do {
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: file.fileURL, to: destination)
+        } catch {
+            Self.logger.error(
+                "watch talk audio copy failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let event = WatchTalkAudioEvent(
+            captureId: captureId,
+            fileURL: destination,
+            targetSessionKey: metadata["targetSessionKey"] as? String,
+            targetLabel: metadata["targetLabel"] as? String,
+            sentAtMs: metadata["sentAtMs"] as? Int,
+            transport: "transferFile")
+        self.emitTalkAudio(event)
     }
 
     func sessionReachabilityDidChange(_ session: WCSession) {

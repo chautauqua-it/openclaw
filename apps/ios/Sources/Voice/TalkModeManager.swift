@@ -880,10 +880,13 @@ final class TalkModeManager: NSObject {
         do {
             let startedAt = Date().timeIntervalSince1970
             await self.subscribeChatIfNeeded(sessionKey: targetKey)
+            // Replies are spoken by the Watch TTS with an Italian voice: force the
+            // reply language so the model does not drift (Spanish replies bug).
             let prompt = TalkPromptBuilder.build(
                 transcript: cleanedTranscript,
                 interruptedAtSeconds: nil,
                 includeVoiceDirectiveHint: false)
+                + "\nReply in the same language as the user's message (Italian for Italian input)."
             GatewayDiagnostics.log("watch talk: chat.send start key=\(targetKey) chars=\(prompt.count)")
             let runId = try await self.sendChat(prompt, sessionKey: targetKey, gateway: gateway)
             GatewayDiagnostics.log("watch talk: chat.send ok runId=\(runId)")
@@ -914,6 +917,52 @@ final class TalkModeManager: NSObject {
         } catch {
             GatewayDiagnostics.log("watch talk: failed error=\(error.localizedDescription)")
             return nil
+        }
+    }
+
+    /// Transcribes a Watch-recorded audio file with the on-device recognizer,
+    /// using the same locale selection as the iPhone talk loop. watchOS has no
+    /// Speech framework, so conversation-mode audio lands here for STT.
+    func transcribeAudioFile(url: URL) async -> String? {
+        let authorized = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status == .authorized)
+            }
+        }
+        guard authorized else {
+            GatewayDiagnostics.log("watch talk: speech recognition not authorized")
+            return nil
+        }
+
+        let localSpeechLocale = UserDefaults.standard.string(forKey: TalkSpeechLocale.storageKey)
+        let resolved = TalkSpeechLocale.makeRecognizer(
+            localSelection: localSpeechLocale,
+            gatewaySelection: self.gatewaySpeechLocaleID)
+        guard let recognizer = resolved.recognizer, recognizer.isAvailable else {
+            GatewayDiagnostics.log("watch talk: file transcription recognizer unavailable")
+            return nil
+        }
+        GatewayDiagnostics.log("watch talk: transcribe file locale=\(resolved.localeID ?? "default")")
+
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        request.shouldReportPartialResults = false
+        request.taskHint = .dictation
+
+        let gate = TalkOneShotGate()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            recognizer.recognitionTask(with: request) { result, error in
+                if let result, result.isFinal {
+                    gate.fire {
+                        continuation.resume(returning: result.bestTranscription.formattedString)
+                    }
+                } else if let error {
+                    GatewayDiagnostics.log(
+                        "watch talk: file transcription failed error=\(error.localizedDescription)")
+                    gate.fire {
+                        continuation.resume(returning: nil)
+                    }
+                }
+            }
         }
     }
 
@@ -2294,6 +2343,21 @@ private struct IncrementalSpeechPrefetchState {
 private struct IncrementalPrefetchedAudio {
     let chunks: [Data]
     let outputFormat: String?
+}
+
+/// Ensures a continuation resumes exactly once from recognition callbacks that
+/// can fire on an arbitrary queue and report both a final result and an error.
+private final class TalkOneShotGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+
+    func fire(_ block: () -> Void) {
+        self.lock.lock()
+        let shouldRun = !self.fired
+        self.fired = true
+        self.lock.unlock()
+        if shouldRun { block() }
+    }
 }
 
 // swiftlint:enable type_body_length file_length

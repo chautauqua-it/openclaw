@@ -284,6 +284,11 @@ final class NodeAppModel {
                 await self?.handleWatchTalkUtterance(event)
             }
         }
+        self.watchMessagingService.setTalkAudioHandler { [weak self] event in
+            Task { @MainActor in
+                await self?.handleWatchTalkAudio(event)
+            }
+        }
 
         self.voiceWake.configure { [weak self] cmd in
             guard let self else { return }
@@ -2711,6 +2716,33 @@ extension NodeAppModel {
             captureId: event.captureId,
             transcript: transcript,
             replyText: reply)
+    }
+
+    /// Conversation mode: the Watch has no Speech framework, so it ships the raw
+    /// audio here. Transcribe on-iPhone, then reuse the utterance pipeline.
+    private func handleWatchTalkAudio(_ event: WatchTalkAudioEvent) async {
+        defer { try? FileManager.default.removeItem(at: event.fileURL) }
+        GatewayDiagnostics.log("watch talk: audio received capture=\(event.captureId)")
+
+        await self.sendWatchTalkState(captureId: event.captureId, state: .transcribing, text: nil)
+
+        let transcript = await self.talkMode.transcribeAudioFile(url: event.fileURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let transcript, !transcript.isEmpty else {
+            await self.sendWatchTalkState(
+                captureId: event.captureId,
+                state: .error,
+                text: "Non ho capito, riprova")
+            return
+        }
+
+        await self.handleWatchTalkUtterance(WatchTalkUtteranceEvent(
+            captureId: event.captureId,
+            transcript: transcript,
+            targetSessionKey: event.targetSessionKey,
+            targetLabel: event.targetLabel,
+            sentAtMs: event.sentAtMs,
+            transport: event.transport))
     }
 
     private func resolveWatchTalkSessionKey(sessionKey: String?, label: String?) -> String {

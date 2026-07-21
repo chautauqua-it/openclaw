@@ -5,7 +5,7 @@ struct WatchTalkView: View {
     var onClose: (() -> Void)?
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Text(self.controller.statusLabel)
                 .font(.headline)
                 .multilineTextAlignment(.center)
@@ -29,20 +29,49 @@ struct WatchTalkView: View {
             }
             .frame(maxHeight: .infinity)
 
-            if self.controller.isBusy {
+            if self.controller.conversationActive {
+                if self.controller.phase == .listening {
+                    Button {
+                        self.controller.finishListeningEarly()
+                    } label: {
+                        Label("Ho finito", systemImage: "waveform")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .tint(.green)
+                }
+                Button(role: .destructive) {
+                    self.controller.stopConversation()
+                } label: {
+                    Label("Termina", systemImage: "stop.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+            } else if self.controller.isBusy {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
             } else {
-                TextFieldLink(prompt: Text("Parla con Spock")) {
-                    Label("Parla", systemImage: "mic.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                Button {
+                    self.controller.startConversation()
+                } label: {
+                    Label("Conversazione", systemImage: "mic.fill")
+                        .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
+                }
+                .tint(.accentColor)
+
+                TextFieldLink(prompt: Text("Parla con Spock")) {
+                    Label("Detta", systemImage: "keyboard")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 } onSubmit: { text in
                     self.controller.submit(transcript: text)
                 }
-                .tint(.accentColor)
             }
         }
         .padding(.horizontal, 8)
