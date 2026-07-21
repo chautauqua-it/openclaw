@@ -283,6 +283,17 @@ final class WADSipManager: ObservableObject {
         self.core?.processPushNotification(callId: callId)
     }
 
+    /// Avvia il core se serve e attende la registrazione SIP: per le chiamate
+    /// partite da CarPlay ad app fredda, dove il telefono WAD non è mai stato aperto.
+    func ensureRegistered(timeout: TimeInterval = 8) async -> Bool {
+        if self.core == nil { await self.start() }
+        let deadline = Date().addingTimeInterval(timeout)
+        while !self.registered, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        return self.registered
+    }
+
     /// Prepara la AVAudioSession per linphone: da chiamare nei handler CallKit
     /// prima di accept/invite (requisito linphone con callkitEnabled).
     func configureAudioSession() {
