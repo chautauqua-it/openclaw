@@ -260,7 +260,7 @@ private struct WatchGenericInboxView: View {
                 Button {
                     WatchTalkLaunchSignal.shared.request()
                 } label: {
-                    Label("Agenti", systemImage: "person.wave.2.fill")
+                    Label("Parla con Spock", systemImage: "mic.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)

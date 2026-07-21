@@ -46,7 +46,7 @@ struct WatchTalkView: View {
             }
         }
         .padding(.horizontal, 8)
-        .navigationTitle("Agenti")
+        .navigationTitle("Spock")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button {

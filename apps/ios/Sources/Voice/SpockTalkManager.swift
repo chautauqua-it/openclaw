@@ -43,6 +43,10 @@ final class SpockTalkManager {
 
     static let defaultServerURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:40812"
 
+    /// Istanza per CarPlay: la scena auto vive fuori dalla gerarchia SwiftUI e
+    /// deve poter avviare/fermare la stessa sessione voce da più connessioni.
+    static let shared = SpockTalkManager()
+
     private let logger = Logger(subsystem: "ai.openclaw.node", category: "spock-talk")
     private var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
