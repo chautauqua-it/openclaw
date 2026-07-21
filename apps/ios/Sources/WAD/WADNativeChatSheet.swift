@@ -387,6 +387,7 @@ private struct WADChatThreadView: View {
     @State private var pendingImages: [WADPendingImage] = []
     @State private var seenMessageIds: Set<String> = []
     @State private var notifiedMessageIds: Set<String> = []
+    @StateObject private var voiceRecorder = WADVoiceRecorder()
 
     private let api = WADAPIClient.shared
 
@@ -413,6 +414,7 @@ private struct WADChatThreadView: View {
         .onDisappear {
             self.pollTask?.cancel()
             self.pollTask = nil
+            self.voiceRecorder.cancel()
         }
         .onChange(of: self.photoItems) { _, newValue in
             guard !newValue.isEmpty else { return }
@@ -521,33 +523,92 @@ private struct WADChatThreadView: View {
                     .padding(.top, 4)
                 }
             }
-            HStack(spacing: 8) {
-                PhotosPicker(
-                    selection: self.$photoItems,
-                    maxSelectionCount: 4,
-                    matching: .images)
-                {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.title3)
-                }
-                .disabled(self.sending)
-                TextField("Messaggio...", text: self.$draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...4)
-                Button { Task { await self.sendDraft() } } label: {
-                    if self.sending {
-                        ProgressView()
+            if self.voiceRecorder.state == .recording {
+                self.recordingBar
+            } else {
+                HStack(spacing: 8) {
+                    PhotosPicker(
+                        selection: self.$photoItems,
+                        maxSelectionCount: 4,
+                        matching: .images)
+                    {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.title3)
+                    }
+                    .disabled(self.sending)
+                    TextField("Messaggio...", text: self.$draft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...4)
+                    if self.canSend {
+                        Button { Task { await self.sendDraft() } } label: {
+                            if self.sending {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.title2)
+                            }
+                        }
+                        .disabled(self.sending)
                     } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
+                        Button { Task { await self.voiceRecorder.start() } } label: {
+                            if self.sending {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "mic.circle.fill")
+                                    .font(.title2)
+                            }
+                        }
+                        .disabled(self.sending)
                     }
                 }
-                .disabled(!self.canSend || self.sending)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                if self.voiceRecorder.state == .denied {
+                    Text("Microfono negato: abilitalo in Impostazioni → WAD")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .padding(.bottom, 4)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
         .background(.bar)
+    }
+
+    private var recordingBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                self.voiceRecorder.cancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityLabel("Annulla registrazione")
+            Circle()
+                .fill(.red)
+                .frame(width: 9, height: 9)
+                .opacity(Int(self.voiceRecorder.elapsed * 2) % 2 == 0 ? 1 : 0.35)
+            Text(self.recordingTime)
+                .font(.body.monospacedDigit().weight(.semibold))
+            Text("Sto registrando...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                Task { await self.sendVoiceNote() }
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title)
+            }
+            .accessibilityLabel("Invia messaggio vocale")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var recordingTime: String {
+        let total = Int(self.voiceRecorder.elapsed)
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private var canSend: Bool {
@@ -597,6 +658,23 @@ private struct WADChatThreadView: View {
                 if Task.isCancelled { break }
                 await self.load(initial: false)
             }
+        }
+    }
+
+    private func sendVoiceNote() async {
+        guard let audio = self.voiceRecorder.stop() else { return }
+        self.sending = true
+        defer { self.sending = false }
+        do {
+            _ = try await self.api.sendVoice(
+                channelId: self.channel.id,
+                audio: audio,
+                replyTo: self.replyTarget?.id)
+            self.replyTarget = nil
+            await self.load(initial: false)
+            self.error = nil
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Invio vocale fallito"
         }
     }
 
@@ -821,6 +899,8 @@ private struct WADMessageBubbleView: View {
                                 ProgressView().frame(height: 80)
                             }
                         }
+                    } else if attachment.isAudio, let url = api.attachmentURL(attachment.id) {
+                        WADVoiceAttachmentView(url: url, name: attachment.name)
                     } else if let url = api.attachmentURL(attachment.id) {
                         Link(destination: url) {
                             self.attachmentChip(attachment)
