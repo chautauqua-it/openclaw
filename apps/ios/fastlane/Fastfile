@@ -238,7 +238,10 @@ def build_beta_release(context)
     archive_path: archive_path,
     output_directory: output_directory,
     output_name: "OpenClaw-#{version}.ipa",
-    xcargs: "-allowProvisioningUpdates",
+    # Anche l'archive ha bisogno dell'API key ASC: senza, xcodebuild non può
+    # rigenerare i profili managed quando cambiano le capability (es. CarPlay)
+    # e fallisce con "No Accounts" / entitlement mancante nel profilo.
+    xcargs: export_xcargs,
     export_xcargs: export_xcargs,
     export_options: {
       signingStyle: "automatic"
