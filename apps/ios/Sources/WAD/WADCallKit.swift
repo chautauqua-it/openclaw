@@ -24,6 +24,9 @@ final class WADCallCenter: NSObject, ObservableObject {
 
     /// UUID della chiamata corrente lato CallKit. Una sola linea per volta.
     private var activeCallUUID: UUID?
+    /// Ultimo token VoIP ricevuto da PushKit; se arriva prima del login WAD lo
+    /// ritentiamo appena la sessione diventa valida.
+    private var currentToken: String?
     /// Token VoIP esadecimale registrato su WAD (per de-dup e re-invio).
     private var lastSentToken: String?
 
@@ -54,6 +57,13 @@ final class WADCallCenter: NSObject, ObservableObject {
         self.voipRegistry = registry
         // Aggancia il manager SIP così i cambi di stato aggiornano CallKit.
         WADSipManager.shared.callCenter = self
+    }
+
+    /// Da chiamare dopo login/bootstrap WAD: PushKit può consegnare il token
+    /// prima che il cookie sessione sia valido, quindi serve un retry esplicito.
+    func refreshVoipTokenRegistration() {
+        guard let token = self.currentToken else { return }
+        Task { await self.sendTokenIfNeeded(token) }
     }
 
     // MARK: Chiamata in arrivo (da push)
@@ -132,6 +142,7 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
     {
         guard type == .voIP else { return }
         let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
+        self.currentToken = token
         Task { await self.sendTokenIfNeeded(token) }
     }
 
