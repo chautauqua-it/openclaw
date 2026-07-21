@@ -26,6 +26,9 @@ final class WADSipManager: ObservableObject {
     @Published var error: String?
     @Published var ext = ""
 
+    /// CallKit: aggiornato dai cambi di stato SIP e usato per la UI di sistema.
+    weak var callCenter: WADCallCenter?
+
     private var core: Core?
     private var coreDelegate: CoreDelegate?
     private var currentCall: Call?
@@ -69,6 +72,9 @@ final class WADSipManager: ObservableObject {
         let core = try factory.createCore(configPath: "", factoryConfigPath: "", systemContext: nil)
         core.autoIterateEnabled = true
         core.pushNotificationEnabled = false
+        // CallKit possiede la sessione audio: linphone la attiva solo quando
+        // CXProvider chiama didActivate (vedi WADCallCenter).
+        core.callkitEnabled = true
 
         let delegate = CoreDelegateStub(
             onCallStateChanged: { [weak self] _, call, state, message in
@@ -137,17 +143,21 @@ final class WADSipManager: ObservableObject {
             let display = call.remoteAddress?.displayName ?? ""
             self.remote = display.isEmpty ? (call.remoteAddress?.username ?? "sconosciuto") : display
             self.callState = .ringingIn
+            self.callCenter?.sipReportedIncoming(from: self.remote)
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
             self.callState = .ringingOut
         case .Connected, .StreamsRunning:
             if self.callState != .inCall {
                 self.callState = .inCall
                 self.callStartedAt = Date()
+                self.callCenter?.sipCallConnected()
             }
         case .End, .Released:
             self.finishCall()
+            self.callCenter?.sipCallEnded()
         case .Error:
             self.finishCall()
+            self.callCenter?.sipCallEnded()
             self.error = "Chiamata fallita: \(message)"
         default:
             break
@@ -197,6 +207,23 @@ final class WADSipManager: ObservableObject {
         guard let core = self.core, self.callState == .inCall else { return }
         core.micEnabled = !core.micEnabled
         self.muted = !core.micEnabled
+    }
+
+    func setMuted(_ muted: Bool) {
+        guard let core = self.core else { return }
+        core.micEnabled = !muted
+        self.muted = muted
+    }
+
+    /// Push VoIP ricevuto: assicura il core avviato e recupera l'INVITE pendente.
+    func wakeForPush(callId: String?) async {
+        if self.core == nil { await self.start() }
+        self.core?.processPushNotification(callId: callId)
+    }
+
+    /// Attiva/disattiva la sessione audio linphone su richiesta di CallKit.
+    func activateAudioSession(_ activated: Bool) {
+        self.core?.activateAudioSession(activated: activated)
     }
 
     func sendDTMF(_ digit: String) {
@@ -369,7 +396,7 @@ struct WADPhoneSheet: View {
             } else {
                 List(self.contacts) { contact in
                     Button {
-                        self.phone.call(contact.ext)
+                        WADCallCenter.shared.reportOutgoing(to: contact.ext)
                     } label: {
                         HStack(spacing: 12) {
                             ZStack {
@@ -442,7 +469,7 @@ struct WADPhoneSheet: View {
                 .buttonStyle(.bordered)
                 .disabled(self.number.isEmpty)
                 Button {
-                    self.phone.call(self.number)
+                    WADCallCenter.shared.reportOutgoing(to: self.number)
                     self.number = ""
                 } label: {
                     Image(systemName: "phone.fill")

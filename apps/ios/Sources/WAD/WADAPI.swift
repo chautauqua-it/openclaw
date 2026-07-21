@@ -238,6 +238,21 @@ actor WADAPIClient {
         let data = try await self.request("/api/sip/directory")
         return try self.decode(WADSipDirectory.self, from: data).contacts
     }
+
+    /// Registra il token push VoIP (PushKit) dell'utente: lo usa il ponte
+    /// Mercurio→APNs per svegliare l'app alle chiamate in arrivo.
+    func registerVoipToken(_ token: String) async throws {
+        #if DEBUG
+        let environment = "sandbox"
+        #else
+        let environment = "production"
+        #endif
+        _ = try await self.request(
+            "/api/sip/push-token",
+            options: WADRequestOptions(
+                method: "POST",
+                json: ["token": token, "platform": "ios", "environment": environment]))
+    }
 }
 
 struct WADSipConfig: Codable, Equatable {

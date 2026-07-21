@@ -107,6 +107,8 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
         notificationCenter.delegate = self
         ExecApprovalNotificationBridge.registerCategory(center: notificationCenter)
         application.registerForRemoteNotifications()
+        // PushKit VoIP + CallKit per il telefono SIP Mercurio (squillo a schermo spento).
+        WADCallCenter.shared.registerForVoipPushes()
         return true
     }
 
