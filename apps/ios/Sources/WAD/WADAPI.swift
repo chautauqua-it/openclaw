@@ -232,12 +232,28 @@ actor WADAPIClient {
         let data = try await self.request("/api/sip/config")
         return try self.decode(WADSipConfig.self, from: data)
     }
+
+    /// Rubrica degli interni RESTART (nome + interno).
+    func sipDirectory() async throws -> [WADSipContact] {
+        let data = try await self.request("/api/sip/directory")
+        return try self.decode(WADSipDirectory.self, from: data).contacts
+    }
 }
 
 struct WADSipConfig: Codable, Equatable {
     let domain: String
     let ext: String
     let password: String
+}
+
+struct WADSipDirectory: Codable {
+    let contacts: [WADSipContact]
+}
+
+struct WADSipContact: Codable, Equatable, Identifiable {
+    let ext: String
+    let name: String
+    var id: String { self.ext }
 }
 
 /// Cache locale dei canali per suggerimenti Siri anche ad app fredda.
