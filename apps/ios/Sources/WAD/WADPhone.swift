@@ -33,6 +33,7 @@ final class WADSipManager: ObservableObject {
     private var coreDelegate: CoreDelegate?
     private var currentCall: Call?
     private var domain = ""
+    private var pickupCode = ""
     private var starting = false
 
     /// Scarica le credenziali da WAD e registra l'interno. Riusabile: se le
@@ -56,6 +57,7 @@ final class WADSipManager: ObservableObject {
         if self.configured, self.ext == config.ext, self.registered { return }
         self.ext = config.ext
         self.domain = config.domain
+        self.pickupCode = config.pickupCode ?? ""
         self.configured = true
         self.error = nil
         do {
@@ -87,9 +89,11 @@ final class WADSipManager: ObservableObject {
                     case .Ok:
                         self.registered = true
                         self.error = nil
+                        WADDeviceLog.shared.log("sip", "registrato interno \(self.ext)")
                     case .Failed:
                         self.registered = false
                         self.error = "Registrazione fallita: \(message)"
+                        WADDeviceLog.shared.log("sip.error", "registrazione fallita \(self.ext): \(message)")
                     case .Cleared, .None:
                         self.registered = false
                     default:
@@ -143,6 +147,7 @@ final class WADSipManager: ObservableObject {
             let display = call.remoteAddress?.displayName ?? ""
             self.remote = display.isEmpty ? (call.remoteAddress?.username ?? "sconosciuto") : display
             self.callState = .ringingIn
+            WADDeviceLog.shared.log("sip.callkit", "INVITE ricevuto stato=\(state) remote=\(self.remote)")
             self.callCenter?.sipReportedIncoming(from: self.remote)
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
             self.callState = .ringingOut
@@ -150,15 +155,18 @@ final class WADSipManager: ObservableObject {
             if self.callState != .inCall {
                 self.callState = .inCall
                 self.callStartedAt = Date()
+                WADDeviceLog.shared.log("sip.callkit", "chiamata connessa")
                 self.callCenter?.sipCallConnected()
             }
         case .End, .Released:
+            WADDeviceLog.shared.log("sip.callkit", "chiamata terminata stato=\(state)")
             self.finishCall()
             self.callCenter?.sipCallEnded()
         case .Error:
             self.finishCall()
             self.callCenter?.sipCallEnded()
             self.error = "Chiamata fallita: \(message)"
+            WADDeviceLog.shared.log("sip.error", "chiamata fallita: \(message)")
         default:
             break
         }
@@ -193,6 +201,25 @@ final class WADSipManager: ObservableObject {
         try? call.accept()
     }
 
+    /// Risposta da CallKit. Se il push ha svegliato l'app ma Mercurio non ha
+    /// ancora consegnato l'INVITE al core, prova il pickup dell'interno.
+    @discardableResult
+    func answerFromCallKit() -> Bool {
+        if let call = self.currentCall, self.callState == .ringingIn {
+            WADDeviceLog.shared.log("sip.callkit", "answer: accetto currentCall")
+            try? call.accept()
+            return true
+        }
+        let code = self.pickupCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else {
+            WADDeviceLog.shared.log("sip.callkit", "answer: nessuna currentCall e pickup assente")
+            return false
+        }
+        WADDeviceLog.shared.log("sip.callkit", "answer: fallback pickup \(code)")
+        self.call(code)
+        return true
+    }
+
     func hangup() {
         guard let call = self.currentCall else { return }
         if self.callState == .ringingIn {
@@ -217,6 +244,7 @@ final class WADSipManager: ObservableObject {
 
     /// Push VoIP ricevuto: assicura il core avviato e recupera l'INVITE pendente.
     func wakeForPush(callId: String?) async {
+        WADDeviceLog.shared.log("sip.callkit", "wakeForPush callId=\(callId ?? "-")")
         if self.core == nil { await self.start() }
         self.core?.processPushNotification(callId: callId)
     }
