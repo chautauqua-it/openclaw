@@ -57,6 +57,7 @@ final class WADCallCenter: NSObject, ObservableObject {
         registry.delegate = self
         registry.desiredPushTypes = [.voIP]
         self.voipRegistry = registry
+        WADDeviceLog.shared.log("sip.callkit", "PushKit registrato")
         // Aggancia il manager SIP così i cambi di stato aggiornano CallKit.
         WADSipManager.shared.callCenter = self
     }
@@ -65,6 +66,7 @@ final class WADCallCenter: NSObject, ObservableObject {
     /// prima che il cookie sessione sia valido, quindi serve un retry esplicito.
     func refreshVoipTokenRegistration() {
         guard let token = self.currentToken else { return }
+        WADDeviceLog.shared.log("sip.callkit", "retry token VoIP dopo login")
         Task { await self.sendTokenIfNeeded(token) }
     }
 
@@ -88,8 +90,10 @@ final class WADCallCenter: NSObject, ObservableObject {
         update.supportsUngrouping = false
         self.provider.reportNewIncomingCall(with: uuid, update: update) { error in
             if error != nil {
+                WADDeviceLog.shared.log("sip.callkit", "report incoming fallito: \(error?.localizedDescription ?? "errore")")
                 self.activeCallUUID = nil
             } else {
+                WADDeviceLog.shared.log("sip.callkit", "report incoming ok callId=\(callId ?? "-") from=\(title)")
                 // Sveglia il SIP e recupera l'INVITE per questo call-id.
                 Task { @MainActor in await WADSipManager.shared.wakeForPush(callId: callId) }
                 self.scheduleGhostRingWatchdog(for: uuid)
@@ -107,6 +111,7 @@ final class WADCallCenter: NSObject, ObservableObject {
             try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
             guard self.activeCallUUID == uuid, !self.sipCallArrived else { return }
             self.activeCallUUID = nil
+            WADDeviceLog.shared.log("sip.callkit", "watchdog: nessun INVITE dopo push, chiudo squillo")
             self.provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
         }
     }
@@ -117,6 +122,7 @@ final class WADCallCenter: NSObject, ObservableObject {
     /// se non l'abbiamo già segnalata via push, mostriamo comunque la UI di sistema.
     func sipReportedIncoming(from: String) {
         self.sipCallArrived = true
+        WADDeviceLog.shared.log("sip.callkit", "linphone ha INVITE remote=\(from)")
         guard self.activeCallUUID == nil else { return }
         self.reportIncoming(callId: nil, from: from, displayName: from) {}
     }
@@ -125,6 +131,7 @@ final class WADCallCenter: NSObject, ObservableObject {
     func sipCallConnected() {
         self.sipCallArrived = true
         guard let uuid = self.activeCallUUID else { return }
+        WADDeviceLog.shared.log("sip.callkit", "CallKit connected")
         self.provider.reportOutgoingCall(with: uuid, connectedAt: Date())
     }
 
@@ -132,6 +139,7 @@ final class WADCallCenter: NSObject, ObservableObject {
     func sipCallEnded() {
         guard let uuid = self.activeCallUUID else { return }
         self.activeCallUUID = nil
+        WADDeviceLog.shared.log("sip.callkit", "CallKit ended")
         self.provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
     }
 
@@ -142,7 +150,12 @@ final class WADCallCenter: NSObject, ObservableObject {
         let handle = CXHandle(type: .generic, value: number)
         let action = CXStartCallAction(call: uuid, handle: handle)
         self.callController.request(CXTransaction(action: action)) { error in
-            if error != nil { self.activeCallUUID = nil; return }
+            if error != nil {
+                WADDeviceLog.shared.log("sip.callkit", "start outgoing fallito: \(error?.localizedDescription ?? "errore")")
+                self.activeCallUUID = nil
+                return
+            }
+            WADDeviceLog.shared.log("sip.callkit", "start outgoing ok \(number)")
             Task { @MainActor in
                 self.provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
             }
@@ -164,6 +177,7 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
         guard type == .voIP else { return }
         let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
         self.currentToken = token
+        WADDeviceLog.shared.log("sip.callkit", "token VoIP ricevuto suffix=\(token.suffix(8))")
         Task { await self.sendTokenIfNeeded(token) }
     }
 
@@ -172,6 +186,7 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
         didInvalidatePushTokenFor type: PKPushType)
     {
         self.lastSentToken = nil
+        WADDeviceLog.shared.log("sip.callkit", "token VoIP invalidato")
     }
 
     func pushRegistry(
@@ -184,6 +199,7 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
         let callId = info["callId"] as? String
         let from = (info["from"] as? String) ?? "Sconosciuto"
         let displayName = (info["displayName"] as? String) ?? from
+        WADDeviceLog.shared.log("sip.callkit", "push incoming callId=\(callId ?? "-") from=\(from)")
         self.reportIncoming(callId: callId, from: from, displayName: displayName, completion: completion)
     }
 
@@ -193,8 +209,9 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
         do {
             try await WADAPIClient.shared.registerVoipToken(token)
             self.lastSentToken = token
+            WADDeviceLog.shared.log("sip.callkit", "token VoIP inviato a WAD suffix=\(token.suffix(8))")
         } catch {
-            // Riproveremo al prossimo update del token o al riavvio.
+            WADDeviceLog.shared.log("sip.callkit", "token VoIP non inviato: \(error.localizedDescription)")
         }
     }
 }
@@ -207,35 +224,42 @@ extension WADCallCenter: @preconcurrency PKPushRegistryDelegate {
 extension WADCallCenter: @preconcurrency CXProviderDelegate {
     func providerDidReset(_ provider: CXProvider) {
         self.activeCallUUID = nil
+        WADDeviceLog.shared.log("sip.callkit", "provider reset")
         WADSipManager.shared.hangup()
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        WADSipManager.shared.answer()
+        WADDeviceLog.shared.log("sip.callkit", "azione rispondi")
+        _ = WADSipManager.shared.answerFromCallKit()
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         self.activeCallUUID = nil
+        WADDeviceLog.shared.log("sip.callkit", "azione termina")
         WADSipManager.shared.hangup()
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        WADDeviceLog.shared.log("sip.callkit", "azione start \(action.handle.value)")
         WADSipManager.shared.call(action.handle.value)
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        WADDeviceLog.shared.log("sip.callkit", "azione mute=\(action.isMuted)")
         WADSipManager.shared.setMuted(action.isMuted)
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        WADDeviceLog.shared.log("sip.callkit", "audio activate")
         WADSipManager.shared.activateAudioSession(true)
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        WADDeviceLog.shared.log("sip.callkit", "audio deactivate")
         WADSipManager.shared.activateAudioSession(false)
     }
 }

@@ -259,6 +259,7 @@ struct WADSipConfig: Codable, Equatable {
     let domain: String
     let ext: String
     let password: String
+    let pickupCode: String?
 }
 
 struct WADSipDirectory: Codable {
