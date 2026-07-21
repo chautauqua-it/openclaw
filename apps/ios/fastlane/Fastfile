@@ -241,8 +241,9 @@ def build_beta_release(context)
     # Anche l'archive ha bisogno dell'API key ASC: senza, xcodebuild non può
     # rigenerare i profili managed quando cambiano le capability (es. CarPlay)
     # e fallisce con "No Accounts" / entitlement mancante nel profilo.
+    # Gym usa xcargs anche nell'export, quindi export_xcargs deve restare vuoto
+    # o le opzioni -authenticationKey* risultano duplicate.
     xcargs: export_xcargs,
-    export_xcargs: export_xcargs,
     export_options: {
       signingStyle: "automatic"
     }
