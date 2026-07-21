@@ -51,6 +51,7 @@ private final class WADChatState: ObservableObject {
         do {
             self.user = try await self.api.me()
             self.phase = .loggedIn
+            WADCallCenter.shared.refreshVoipTokenRegistration()
         } catch {
             self.phase = .loggedOut
         }
@@ -63,6 +64,7 @@ private final class WADChatState: ObservableObject {
         do {
             self.user = try await self.api.login(username: username, password: password)
             self.phase = .loggedIn
+            WADCallCenter.shared.refreshVoipTokenRegistration()
         } catch {
             self.loginError = (error as? LocalizedError)?.errorDescription ?? "Login fallito"
         }
