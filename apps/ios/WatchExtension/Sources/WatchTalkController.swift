@@ -3,17 +3,18 @@ import Foundation
 import Observation
 import WatchKit
 
-/// Drives the Watch push-to-talk loop. Speech-to-text uses the system dictation
-/// input (presented by `WatchTalkView` via `TextFieldLink`), because the Speech
-/// framework / `SFSpeechRecognizer` is not available on watchOS. The recognized
-/// text is relayed to the iPhone (which forwards it to the target agent session),
-/// and the reply is spoken back on-device with `AVSpeechSynthesizer`. No raw
-/// audio crosses the WCSession link.
+/// Drives the Watch talk loop. watchOS has no Speech framework, so speech-to-text
+/// happens on the iPhone: in conversation mode the Watch records the utterance
+/// (`WatchVoiceRecorder`) and ships the audio file over WCSession for
+/// transcription; the legacy dictation path (`TextFieldLink`) stays as fallback.
+/// Replies are spoken on-device with `AVSpeechSynthesizer` using the best
+/// available Italian voice.
 @MainActor
 @Observable
 final class WatchTalkController: NSObject {
     enum Phase: Equatable {
         case idle
+        case listening
         case sending
         case thinking
         case speaking
@@ -23,6 +24,7 @@ final class WatchTalkController: NSObject {
     private(set) var phase: Phase = .idle
     private(set) var partialTranscript: String = ""
     private(set) var replyText: String = ""
+    private(set) var conversationActive = false
 
     /// Agent the Action Button talks to. Resolved against the gateway agent
     /// directory on the iPhone side (by name or id), defaulting to Spock.
@@ -30,6 +32,7 @@ final class WatchTalkController: NSObject {
 
     private unowned let receiver: WatchConnectivityReceiver
     private let synthesizer = AVSpeechSynthesizer()
+    let recorder = WatchVoiceRecorder()
     private var activeCaptureId: String?
 
     init(receiver: WatchConnectivityReceiver) {
@@ -40,7 +43,7 @@ final class WatchTalkController: NSObject {
 
     var isBusy: Bool {
         switch self.phase {
-        case .sending, .thinking, .speaking:
+        case .listening, .sending, .thinking, .speaking:
             true
         case .idle, .error:
             false
@@ -50,6 +53,7 @@ final class WatchTalkController: NSObject {
     var statusLabel: String {
         switch self.phase {
         case .idle: "Tocca per parlare"
+        case .listening: "Ti ascolto…"
         case .sending: "Invio…"
         case .thinking: "Spock sta pensando…"
         case .speaking: "Spock risponde"
@@ -57,7 +61,73 @@ final class WatchTalkController: NSObject {
         }
     }
 
-    // MARK: - Capture lifecycle
+    // MARK: - Conversation mode (on-watch audio capture)
+
+    func startConversation() {
+        guard !self.conversationActive else { return }
+        self.conversationActive = true
+        self.replyText = ""
+        self.partialTranscript = ""
+        self.beginListening()
+    }
+
+    func stopConversation() {
+        self.conversationActive = false
+        self.recorder.cancel()
+        self.synthesizer.stopSpeaking(at: .immediate)
+        self.activeCaptureId = nil
+        self.phase = .idle
+        self.deactivateAudioSession()
+    }
+
+    private func beginListening() {
+        guard self.conversationActive else { return }
+        self.phase = .listening
+        self.recorder.start { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case let .captured(url):
+                self.sendAudio(url)
+            case .empty:
+                // Nothing said: end the conversation instead of looping forever.
+                self.stopConversation()
+            case let .failed(message):
+                self.conversationActive = false
+                self.failCapture(message)
+            }
+        }
+    }
+
+    /// User tapped while listening: close the utterance right away.
+    func finishListeningEarly() {
+        guard self.phase == .listening else { return }
+        self.recorder.stopAndDeliver()
+    }
+
+    private func sendAudio(_ url: URL) {
+        self.replyText = ""
+        self.partialTranscript = ""
+        let captureId = UUID().uuidString
+        self.activeCaptureId = captureId
+        self.phase = .sending
+
+        let label = self.targetLabel
+        Task { @MainActor in
+            let sent = await self.receiver.sendTalkAudio(
+                fileURL: url,
+                captureId: captureId,
+                targetLabel: label)
+            guard self.activeCaptureId == captureId else { return }
+            if sent {
+                if self.phase == .sending { self.phase = .thinking }
+            } else {
+                self.conversationActive = false
+                self.failCapture("iPhone non raggiungibile")
+            }
+        }
+    }
+
+    // MARK: - Dictation fallback
 
     /// Called by the view once the system dictation returns recognized text.
     func submit(transcript rawTranscript: String) {
@@ -87,6 +157,8 @@ final class WatchTalkController: NSObject {
     }
 
     func cancel() {
+        self.conversationActive = false
+        self.recorder.cancel()
         self.synthesizer.stopSpeaking(at: .immediate)
         self.activeCaptureId = nil
         self.partialTranscript = ""
@@ -117,11 +189,35 @@ final class WatchTalkController: NSObject {
 
     func ingest(reply message: WatchTalkReplyMessage) {
         guard message.captureId == self.activeCaptureId else { return }
+        if let transcript = message.transcript, !transcript.isEmpty {
+            self.partialTranscript = transcript
+        }
         self.replyText = message.replyText
         self.speak(message.replyText)
     }
 
     // MARK: - Text-to-speech
+
+    /// Best Italian voice on this Watch (premium > enhanced > default quality).
+    /// `AVSpeechSynthesisVoice(language:)` alone can silently hand back a wrong
+    /// or missing voice, which is how replies ended up sounding Spanish.
+    private static func bestItalianVoice() -> AVSpeechSynthesisVoice? {
+        let italianVoices = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.lowercased().hasPrefix("it") }
+        let ranked = italianVoices.sorted { lhs, rhs in
+            Self.qualityRank(lhs.quality) > Self.qualityRank(rhs.quality)
+        }
+        return ranked.first ?? AVSpeechSynthesisVoice(language: "it-IT")
+    }
+
+    private static func qualityRank(_ quality: AVSpeechSynthesisVoiceQuality) -> Int {
+        switch quality {
+        case .premium: 3
+        case .enhanced: 2
+        case .default: 1
+        @unknown default: 0
+        }
+    }
 
     private func speak(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,17 +234,25 @@ final class WatchTalkController: NSObject {
             // Best effort; speech may still route to the default output.
         }
         let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.voice = AVSpeechSynthesisVoice(language: "it-IT")
+        utterance.voice = Self.bestItalianVoice()
         self.synthesizer.speak(utterance)
     }
 
     private func completeCapture() {
+        if case .error = self.phase { return }
         self.activeCaptureId = nil
+        if self.conversationActive {
+            // Loop: reopen the microphone for the next utterance.
+            self.beginListening()
+            return
+        }
         self.phase = .idle
         self.deactivateAudioSession()
     }
 
     private func failCapture(_ message: String) {
+        self.conversationActive = false
+        self.recorder.cancel()
         self.synthesizer.stopSpeaking(at: .immediate)
         self.activeCaptureId = nil
         self.phase = .error(message)

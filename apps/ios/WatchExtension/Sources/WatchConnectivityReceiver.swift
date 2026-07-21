@@ -141,6 +141,37 @@ final class WatchConnectivityReceiver: NSObject, @unchecked Sendable {
         return await self.sendPayload(payload, session: session)
     }
 
+    /// Ships a recorded utterance to the iPhone for transcription. Uses
+    /// `transferFile`, which queues in the background even when the phone is
+    /// not immediately reachable. The temp file is deleted in
+    /// `session(_:didFinish:error:)` once the transfer settles.
+    func sendTalkAudio(
+        fileURL: URL,
+        captureId: String,
+        targetSessionKey: String? = nil,
+        targetLabel: String? = nil) async -> Bool
+    {
+        await self.ensureActivated()
+        guard let session = self.session else { return false }
+        var metadata: [String: Any] = [
+            "type": "watch.talkAudio",
+            "captureId": captureId,
+            "sentAtMs": Self.nowMs(),
+        ]
+        if let targetSessionKey = targetSessionKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !targetSessionKey.isEmpty
+        {
+            metadata["targetSessionKey"] = targetSessionKey
+        }
+        if let targetLabel = targetLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !targetLabel.isEmpty
+        {
+            metadata["targetLabel"] = targetLabel
+        }
+        _ = session.transferFile(fileURL, metadata: metadata)
+        return true
+    }
+
     func sendExecApprovalResolve(
         approvalId: String,
         decision: WatchExecApprovalDecision) async -> WatchReplySendResult
@@ -499,6 +530,23 @@ extension WatchConnectivityReceiver: WCSessionDelegate {
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
         self.consumeIncomingPayload(userInfo, transport: "transferUserInfo")
+    }
+
+    func session(_: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: (any Error)?) {
+        let url = fileTransfer.file.fileURL
+        try? FileManager.default.removeItem(at: url)
+        if error != nil,
+           (fileTransfer.file.metadata?["type"] as? String) == "watch.talkAudio"
+        {
+            let captureId = (fileTransfer.file.metadata?["captureId"] as? String) ?? ""
+            Task { @MainActor in
+                self.talkController?.ingest(state: WatchTalkStateMessage(
+                    captureId: captureId,
+                    state: .error,
+                    text: "Invio audio fallito",
+                    sentAtMs: nil))
+            }
+        }
     }
 
     func session(_: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

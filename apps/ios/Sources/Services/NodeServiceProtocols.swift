@@ -111,6 +111,15 @@ struct WatchTalkUtteranceEvent: Equatable {
     var transport: String
 }
 
+struct WatchTalkAudioEvent: Equatable {
+    var captureId: String
+    var fileURL: URL
+    var targetSessionKey: String?
+    var targetLabel: String?
+    var sentAtMs: Int?
+    var transport: String
+}
+
 struct WatchNotificationSendResult: Equatable {
     var deliveredImmediately: Bool
     var queuedForDelivery: Bool
@@ -125,6 +134,7 @@ protocol WatchMessagingServicing: AnyObject, Sendable {
     func setExecApprovalSnapshotRequestHandler(
         _ handler: (@Sendable (WatchExecApprovalSnapshotRequestEvent) -> Void)?)
     func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?)
+    func setTalkAudioHandler(_ handler: (@Sendable (WatchTalkAudioEvent) -> Void)?)
     func sendTalkState(
         _ message: OpenClawWatchTalkStateMessage) async throws -> WatchNotificationSendResult
     func sendTalkReply(

@@ -28,6 +28,7 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
     private var execApprovalSnapshotRequestHandler: (
         @Sendable (WatchExecApprovalSnapshotRequestEvent) -> Void)?
     private var talkUtteranceHandler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?
+    private var talkAudioHandler: (@Sendable (WatchTalkAudioEvent) -> Void)?
 
     init(transport: WatchConnectivityTransport = WatchConnectivityTransport()) {
         self.transport = transport
@@ -54,6 +55,11 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
         self.transport.setTalkUtteranceHandler { [weak self] event in
             Task { @MainActor [weak self] in
                 self?.emitTalkUtterance(event)
+            }
+        }
+        self.transport.setTalkAudioHandler { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.emitTalkAudio(event)
             }
         }
     }
@@ -103,6 +109,10 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
 
     func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?) {
         self.talkUtteranceHandler = handler
+    }
+
+    func setTalkAudioHandler(_ handler: (@Sendable (WatchTalkAudioEvent) -> Void)?) {
+        self.talkAudioHandler = handler
     }
 
     func sendNotification(
@@ -190,5 +200,16 @@ final class WatchMessagingService: @preconcurrency WatchMessagingServicing {
                 + "capture=\(event.captureId) transport=\(event.transport) "
                 + "chars=\(event.transcript.count)")
         self.talkUtteranceHandler?(event)
+    }
+
+    private func emitTalkAudio(_ event: WatchTalkAudioEvent) {
+        GatewayDiagnostics.log(
+            "watch messaging: talk audio "
+                + "capture=\(event.captureId) transport=\(event.transport)")
+        guard let handler = self.talkAudioHandler else {
+            try? FileManager.default.removeItem(at: event.fileURL)
+            return
+        }
+        handler(event)
     }
 }
