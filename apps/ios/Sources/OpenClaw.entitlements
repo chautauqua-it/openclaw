@@ -4,11 +4,8 @@
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
-	<!-- CarPlay: riattivare com.apple.developer.carplay-communication quando la
-	     capability "CarPlay Communication App" risulta assegnata da Apple al
-	     bundle id it.differen.openclaw (portale → Identifiers → Additional
-	     Capabilities). Senza, la firma del profilo fallisce. -->
-
+	<key>com.apple.developer.carplay-communication</key>
+	<true/>
 </dict>
 </plist>
 
