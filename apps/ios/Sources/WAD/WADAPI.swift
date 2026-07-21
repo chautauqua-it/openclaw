@@ -253,7 +253,9 @@ struct WADSipDirectory: Codable {
 struct WADSipContact: Codable, Equatable, Identifiable {
     let ext: String
     let name: String
-    var id: String { self.ext }
+    var id: String {
+        self.ext
+    }
 }
 
 /// Cache locale dei canali per suggerimenti Siri anche ad app fredda.
