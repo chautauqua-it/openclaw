@@ -158,6 +158,7 @@ targets:
         NSBonjourServices:
           - _openclaw-gw._tcp
         NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
+        NSContactsUsageDescription: OpenClaw usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.
         NSLocationWhenInUseUsageDescription: OpenClaw uses your location when you allow location sharing.
         NSLocationAlwaysAndWhenInUseUsageDescription: OpenClaw can share your location in the background when you enable Always.
         NSMicrophoneUsageDescription: OpenClaw needs microphone access for voice wake.

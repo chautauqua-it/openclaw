@@ -30,16 +30,22 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         phone.tabTitle = "Telefono"
         phone.tabImage = UIImage(systemName: "phone.fill")
 
+        let rubrica = CPListTemplate(
+            title: "Rubrica",
+            sections: [CPListSection(items: [CPListItem(text: "Carico la rubrica…", detailText: nil)])])
+        rubrica.tabTitle = "Rubrica"
+        rubrica.tabImage = UIImage(systemName: "person.crop.circle.fill")
+
         let spock = CPListTemplate(title: "Spock", sections: [self.spockSection()])
         spock.tabTitle = "Spock"
         spock.tabImage = UIImage(systemName: "waveform")
         self.spockTemplate = spock
 
-        let tabBar = CPTabBarTemplate(templates: [phone, spock])
+        let tabBar = CPTabBarTemplate(templates: [phone, rubrica, spock])
         interfaceController.setRootTemplate(tabBar, animated: false, completion: nil)
         self.observeSpockState()
         Task { @MainActor [weak self] in
-            await self?.showDirectory(in: phone)
+            await self?.showPhoneBook(in: phone, rubrica: rubrica)
         }
     }
 
@@ -52,33 +58,79 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         WADDeviceLog.shared.log("carplay", "scena disconnessa")
     }
 
-    // MARK: - Tab Telefono (rubrica interni)
+    // MARK: - Tab Telefono (preferiti + interni) e Rubrica (contatti iPhone)
 
-    private func showDirectory(in template: CPListTemplate) async {
-        let contacts = (try? await WADAPIClient.shared.sipDirectory()) ?? []
+    @MainActor
+    private func showPhoneBook(in template: CPListTemplate, rubrica: CPListTemplate) async {
+        let book = WADPhoneBook.shared
+        await book.loadAll()
+        await book.loadDeviceContacts()
         guard self.interfaceController != nil else { return }
-        let items: [CPListItem]
-        if contacts.isEmpty {
-            items = [CPListItem(text: "Rubrica non disponibile", detailText: "Apri WAD sull'iPhone e riprova")]
+
+        var sections: [CPListSection] = []
+        if !book.favorites.isEmpty {
+            let items = book.favorites.map { favorite in
+                self.callItem(
+                    text: favorite.name,
+                    detail: favorite.number,
+                    number: WADPhoneBook.dialable(favorite.number))
+            }
+            sections.append(CPListSection(items: items, header: "Preferiti", sectionIndexTitle: nil))
+        }
+        if book.interni.isEmpty {
+            sections.append(CPListSection(items: [
+                CPListItem(text: "Interni non disponibili", detailText: "Apri WAD sull'iPhone e riprova"),
+            ]))
         } else {
-            items = contacts.map { contact in
-                let item = CPListItem(text: contact.name, detailText: "Interno \(contact.ext)")
-                item.handler = { _, completion in
-                    completion()
-                    let ext = contact.ext
-                    Task { @MainActor in
-                        WADDeviceLog.shared.log("carplay", "chiamo \(ext)")
-                        if await WADSipManager.shared.ensureRegistered() {
-                            WADCallCenter.shared.reportOutgoing(to: ext)
-                        } else {
-                            WADDeviceLog.shared.log("carplay", "chiamata \(ext) annullata: SIP non registrato")
-                        }
-                    }
+            let items = book.interni.map { contact in
+                self.callItem(text: contact.name, detail: "Interno \(contact.ext)", number: contact.ext)
+            }
+            sections.append(CPListSection(items: items, header: "Interni", sectionIndexTitle: nil))
+        }
+        template.updateSections(sections)
+
+        let rubricaItems: [CPListItem]
+        if book.contactsDenied {
+            rubricaItems = [CPListItem(
+                text: "Accesso alla rubrica negato",
+                detailText: "Autorizza i contatti in Impostazioni > OpenClaw")]
+        } else if book.deviceContacts.isEmpty {
+            rubricaItems = [CPListItem(text: "Rubrica vuota", detailText: nil)]
+        } else {
+            // Un item per numero, entro il limite CarPlay del template.
+            var items: [CPListItem] = []
+            let cap = CPListTemplate.maximumItemCount
+            outer: for contact in book.deviceContacts {
+                for number in contact.numbers {
+                    if items.count >= cap { break outer }
+                    let detail = contact.numbers.count > 1
+                        ? "\(number.label) \(number.value)"
+                        : number.value
+                    items.append(self.callItem(
+                        text: contact.name,
+                        detail: detail,
+                        number: WADPhoneBook.dialable(number.value)))
                 }
-                return item
+            }
+            rubricaItems = items
+        }
+        rubrica.updateSections([CPListSection(items: rubricaItems)])
+    }
+
+    private func callItem(text: String, detail: String, number: String) -> CPListItem {
+        let item = CPListItem(text: text, detailText: detail)
+        item.handler = { _, completion in
+            completion()
+            Task { @MainActor in
+                WADDeviceLog.shared.log("carplay", "chiamo \(number)")
+                if await WADSipManager.shared.ensureRegistered() {
+                    WADCallCenter.shared.reportOutgoing(to: number)
+                } else {
+                    WADDeviceLog.shared.log("carplay", "chiamata \(number) annullata: SIP non registrato")
+                }
             }
         }
-        template.updateSections([CPListSection(items: items)])
+        return item
     }
 
     // MARK: - Tab Spock (voce realtime)
