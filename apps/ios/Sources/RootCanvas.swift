@@ -33,6 +33,7 @@ struct RootCanvas: View {
         case settings
         case agents
         case quickSetup
+        case wadPhone
 
         var id: Int {
             switch self {
@@ -40,6 +41,7 @@ struct RootCanvas: View {
             case .settings: 1
             case .agents: 2
             case .quickSetup: 3
+            case .wadPhone: 4
             }
         }
     }
@@ -100,6 +102,9 @@ struct RootCanvas: View {
                 openChannels: {
                     self.openWADChannels()
                 },
+                openPhone: {
+                    self.presentedSheet = .wadPhone
+                },
                 openAgents: {
                     self.showSpockTalk = true
                 },
@@ -138,6 +143,8 @@ struct RootCanvas: View {
                 GatewayQuickSetupSheet()
                     .environment(self.appModel)
                     .environment(self.gatewayController)
+            case .wadPhone:
+                WADPhoneSheet()
             }
         }
         .fullScreenCover(isPresented: self.$showSpockTalk) {
@@ -513,6 +520,7 @@ private struct CanvasContent: View {
     var cameraHUDText: String?
     var cameraHUDKind: NodeAppModel.CameraHUDKind?
     var openChannels: () -> Void
+    var openPhone: () -> Void
     var openAgents: () -> Void
     var openSettings: () -> Void
     var retryGatewayConnection: () -> Void
@@ -554,6 +562,9 @@ private struct CanvasContent: View {
                 },
                 onChannelsTap: {
                     self.openChannels()
+                },
+                onPhoneTap: {
+                    self.openPhone()
                 },
                 onAgentsTap: {
                     self.openAgents()
