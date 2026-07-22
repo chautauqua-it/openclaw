@@ -239,6 +239,31 @@ actor WADAPIClient {
         return try self.decode(WADSipDirectory.self, from: data).contacts
     }
 
+    /// Preferiti telefonici personali (salvati in WAD: Mercurio non li gestisce).
+    func sipFavorites() async throws -> [WADSipFavorite] {
+        struct Response: Decodable { let favorites: [WADSipFavorite] }
+        let data = try await self.request("/api/sip/favorites")
+        return try self.decode(Response.self, from: data).favorites
+    }
+
+    @discardableResult
+    func addSipFavorite(name: String, number: String, kind: String) async throws -> WADSipFavorite {
+        struct Response: Decodable { let favorite: WADSipFavorite }
+        let data = try await self.request(
+            "/api/sip/favorites",
+            options: WADRequestOptions(
+                method: "POST",
+                json: ["name": name, "number": number, "kind": kind]))
+        return try self.decode(Response.self, from: data).favorite
+    }
+
+    func deleteSipFavorite(id: String) async throws {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        _ = try await self.request(
+            "/api/sip/favorites/\(encoded)",
+            options: WADRequestOptions(method: "DELETE"))
+    }
+
     /// Registra il token push VoIP (PushKit) dell'utente: lo usa il ponte
     /// Mercurio→APNs per svegliare l'app alle chiamate in arrivo.
     func registerVoipToken(_ token: String) async throws {
@@ -260,6 +285,13 @@ struct WADSipConfig: Codable, Equatable {
     let ext: String
     let password: String
     let pickupCode: String?
+}
+
+struct WADSipFavorite: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let number: String
+    let kind: String
 }
 
 struct WADSipDirectory: Codable {

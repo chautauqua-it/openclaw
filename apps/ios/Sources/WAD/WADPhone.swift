@@ -1,4 +1,5 @@
 import AVFoundation
+import Contacts
 @preconcurrency import linphonesw
 import SwiftUI
 
@@ -414,17 +415,18 @@ final class WADSipManager: ObservableObject {
 struct WADPhoneSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var phone = WADSipManager.shared
+    @ObservedObject private var book = WADPhoneBook.shared
     @State private var number = ""
     @State private var now = Date()
     @State private var idleTab: IdleTab = .dialer
-    @State private var contacts: [WADSipContact] = []
-    @State private var contactsLoaded = false
+    @State private var rubricaFilter = ""
     @State private var transferMode = false
     @State private var transferNumber = ""
 
     private enum IdleTab: Hashable {
         case dialer
-        case directory
+        case interni
+        case rubrica
     }
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -575,10 +577,10 @@ struct WADPhoneSheet: View {
                 .keyboardType(.phonePad)
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal, 40)
-            if !self.contacts.isEmpty {
+            if !self.book.interni.isEmpty {
                 ScrollView {
                     VStack(spacing: 6) {
-                        ForEach(self.contacts) { contact in
+                        ForEach(self.book.interni) { contact in
                             Button { self.transferNumber = contact.ext } label: {
                                 HStack {
                                     Text(contact.name)
@@ -613,7 +615,7 @@ struct WADPhoneSheet: View {
                     .disabled(self.transferNumber.isEmpty)
             }
         }
-        .task { await self.loadContacts() }
+        .task { await self.book.loadInterni() }
     }
 
     /// Consultazione in corso durante un trasferimento assistito.
@@ -648,72 +650,223 @@ struct WADPhoneSheet: View {
     }
 
     private var idleView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
+            if !self.book.favorites.isEmpty {
+                self.favoritesRow
+            }
             Picker("Vista", selection: self.$idleTab) {
                 Text("Tastierino").tag(IdleTab.dialer)
-                Text("Rubrica").tag(IdleTab.directory)
+                Text("Interni").tag(IdleTab.interni)
+                Text("Rubrica").tag(IdleTab.rubrica)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, 40)
-            if self.idleTab == .dialer {
+            .padding(.horizontal, 24)
+            switch self.idleTab {
+            case .dialer:
                 self.dialerView
-            } else {
-                self.directoryView
+            case .interni:
+                self.interniView
+            case .rubrica:
+                self.rubricaView
             }
         }
-        .task { await self.loadContacts() }
+        .task { await self.book.loadAll() }
+        .onChange(of: self.idleTab) { _, tab in
+            if tab == .rubrica {
+                Task { await self.book.loadDeviceContacts() }
+            }
+        }
     }
 
-    private var directoryView: some View {
+    /// Preferiti in scorrimento orizzontale, stile tavolette del telefono Mac:
+    /// tap = chiama, pressione lunga = rimuovi.
+    private var favoritesRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(self.book.favorites) { favorite in
+                    Button {
+                        WADCallCenter.shared.reportOutgoing(to: WADPhoneBook.dialable(favorite.number))
+                    } label: {
+                        VStack(spacing: 5) {
+                            ZStack {
+                                Circle()
+                                    .fill(Self.avatarColor(for: favorite.name))
+                                Text(Self.initials(of: favorite.name))
+                                    .font(.subheadline.weight(.heavy))
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(width: 52, height: 52)
+                            Text(favorite.name)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                        }
+                        .frame(width: 66)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!self.phone.registered)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            Task { await self.book.removeFavorite(number: favorite.number) }
+                        } label: {
+                            Label("Rimuovi dai preferiti", systemImage: "star.slash")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private var interniView: some View {
         Group {
-            if self.contacts.isEmpty {
-                Text(self.contactsLoaded ? "Rubrica non disponibile" : "Carico la rubrica...")
+            if self.book.interni.isEmpty {
+                Text("Carico gli interni...")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding(.top, 26)
             } else {
-                List(self.contacts) { contact in
+                List(self.book.interni) { contact in
                     Button {
                         WADCallCenter.shared.reportOutgoing(to: contact.ext)
                     } label: {
-                        HStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(Self.avatarColor(for: contact.name))
-                                Text(Self.initials(of: contact.name))
-                                    .font(.caption.weight(.heavy))
-                                    .foregroundStyle(.white)
-                            }
-                            .frame(width: 36, height: 36)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(contact.name)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                Text("interno \(contact.ext)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "phone.fill")
-                                .font(.footnote)
-                                .foregroundStyle(self.phone.registered ? Color.green : Color.secondary)
-                        }
+                        self.contactRow(
+                            name: contact.name,
+                            subtitle: "interno \(contact.ext)",
+                            number: contact.ext)
                     }
                     .disabled(!self.phone.registered)
+                    .contextMenu {
+                        self.favoriteToggle(name: contact.name, number: contact.ext, kind: "interno")
+                    }
                 }
                 .listStyle(.plain)
             }
         }
     }
 
-    private func loadContacts() async {
-        guard !self.contactsLoaded else { return }
-        do {
-            self.contacts = try await WADAPIClient.shared.sipDirectory()
-        } catch {
-            self.contacts = []
+    /// Rubrica del telefono (contatti iOS). Un contatto con più numeri mostra
+    /// il menu di scelta al tap.
+    private var rubricaView: some View {
+        Group {
+            if self.book.contactsDenied {
+                VStack(spacing: 8) {
+                    Text("Accesso alla rubrica negato")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Autorizza i contatti in Impostazioni > OpenClaw.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 26)
+            } else if self.book.deviceContacts.isEmpty {
+                Text("Carico la rubrica...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 26)
+            } else {
+                VStack(spacing: 8) {
+                    TextField("Cerca in rubrica", text: self.$rubricaFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        .padding(.horizontal, 20)
+                    List(self.filteredDeviceContacts) { contact in
+                        if contact.numbers.count == 1, let only = contact.numbers.first {
+                            Button {
+                                WADCallCenter.shared.reportOutgoing(to: WADPhoneBook.dialable(only.value))
+                            } label: {
+                                self.contactRow(
+                                    name: contact.name,
+                                    subtitle: only.value,
+                                    number: WADPhoneBook.dialable(only.value))
+                            }
+                            .disabled(!self.phone.registered)
+                            .contextMenu {
+                                self.favoriteToggle(
+                                    name: contact.name,
+                                    number: WADPhoneBook.dialable(only.value),
+                                    kind: "rubrica")
+                            }
+                        } else {
+                            Menu {
+                                ForEach(contact.numbers) { entry in
+                                    Button {
+                                        WADCallCenter.shared.reportOutgoing(to: WADPhoneBook.dialable(entry.value))
+                                    } label: {
+                                        Label("\(entry.label) \(entry.value)", systemImage: "phone.fill")
+                                    }
+                                    self.favoriteToggle(
+                                        name: contact.name,
+                                        number: WADPhoneBook.dialable(entry.value),
+                                        kind: "rubrica")
+                                }
+                            } label: {
+                                self.contactRow(
+                                    name: contact.name,
+                                    subtitle: "\(contact.numbers.count) numeri",
+                                    number: nil)
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                }
+            }
         }
-        self.contactsLoaded = true
+    }
+
+    private var filteredDeviceContacts: [WADPhoneBook.DeviceContact] {
+        let query = self.rubricaFilter.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return self.book.deviceContacts }
+        return self.book.deviceContacts.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.numbers.contains { $0.value.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private func contactRow(name: String, subtitle: String, number: String?) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Self.avatarColor(for: name))
+                Text(Self.initials(of: name))
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 36, height: 36)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let number, self.book.isFavorite(number: number) {
+                Image(systemName: "star.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
+            }
+            Image(systemName: "phone.fill")
+                .font(.footnote)
+                .foregroundStyle(self.phone.registered ? Color.green : Color.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func favoriteToggle(name: String, number: String, kind: String) -> some View {
+        if self.book.isFavorite(number: number) {
+            Button(role: .destructive) {
+                Task { await self.book.removeFavorite(number: number) }
+            } label: {
+                Label("Rimuovi dai preferiti", systemImage: "star.slash")
+            }
+        } else {
+            Button {
+                Task { await self.book.addFavorite(name: name, number: number, kind: kind) }
+            } label: {
+                Label("Aggiungi ai preferiti", systemImage: "star")
+            }
+        }
     }
 
     private static func initials(of name: String) -> String {
