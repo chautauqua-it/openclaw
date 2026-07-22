@@ -14,6 +14,7 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
     private var observingSpock = false
     private var spockMeterTimer: Timer?
     private var spockMeterFrame = 0
+    private var spockMeterItem: CPListItem?
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
@@ -163,46 +164,18 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
                 }
             }
         }
+        self.spockMeterItem = meter
         items.append(meter)
 
-        let main: CPListItem
         if manager.isActive {
-            main = CPListItem(text: "Termina conversazione", detailText: self.spockStatusText(manager))
-            main.setImage(UIImage(systemName: "stop.circle.fill"))
-            main.handler = { _, completion in
-                completion()
-                Task { @MainActor in
-                    WADDeviceLog.shared.log("carplay", "spock: termino conversazione")
-                    SpockTalkManager.shared.stop()
-                    NodeAppModel.current?.endSpockTalkCapture()
-                }
-            }
-        } else {
-            let detail: String = if case .error(let message) = manager.phase {
-                "Errore: \(message)"
-            } else {
-                "Avvia la conversazione vocale"
-            }
-            main = CPListItem(text: "Parla con Spock", detailText: detail)
-            main.setImage(UIImage(systemName: "mic.circle.fill"))
-            main.handler = { _, completion in
-                completion()
-                Task { @MainActor in
-                    WADDeviceLog.shared.log("carplay", "spock: avvio conversazione")
-                    NodeAppModel.current?.beginSpockTalkCapture()
-                    SpockTalkManager.shared.start()
-                }
-            }
-        }
-        items.append(main)
-
-        if manager.isActive {
+            // Il comando "Termina" è ridondante: si chiude toccando il meter.
+            // Resta solo il pulsante microfono, icona rotonda che fa il muto.
             let mute = CPListItem(
                 text: manager.isMuted ? "Riattiva microfono" : "Spegni microfono",
                 detailText: manager.isMuted
                     ? "Il microfono è in muto: Spock non ti sente"
                     : "Spock ti ascolta: tocca per il muto")
-            mute.setImage(UIImage(systemName: manager.isMuted ? "mic.slash.fill" : "mic.fill"))
+            mute.setImage(UIImage(systemName: manager.isMuted ? "mic.slash.circle.fill" : "mic.circle.fill"))
             mute.handler = { _, completion in
                 completion()
                 Task { @MainActor in
@@ -210,6 +183,23 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
                 }
             }
             items.append(mute)
+        } else {
+            let detail: String = if case .error(let message) = manager.phase {
+                "Errore: \(message)"
+            } else {
+                "Avvia la conversazione vocale"
+            }
+            let start = CPListItem(text: "Parla con Spock", detailText: detail)
+            start.setImage(UIImage(systemName: "mic.circle.fill"))
+            start.handler = { _, completion in
+                completion()
+                Task { @MainActor in
+                    WADDeviceLog.shared.log("carplay", "spock: avvio conversazione")
+                    NodeAppModel.current?.beginSpockTalkCapture()
+                    SpockTalkManager.shared.start()
+                }
+            }
+            items.append(start)
         }
 
         return CPListSection(items: items)
@@ -232,11 +222,14 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
     }
 
     private func refreshSpockMeterFrame() {
-        guard self.interfaceController != nil, let template = self.spockTemplate else { return }
+        guard self.interfaceController != nil, let meter = self.spockMeterItem else { return }
         let manager = SpockTalkManager.shared
         guard manager.isActive else { return }
         self.spockMeterFrame += 1
-        template.updateSections([self.spockSection()])
+        // Aggiorno SOLO l'immagine dell'item in place: ricostruire l'intera
+        // sezione a 4 Hz faceva lampeggiare il tab Spock. Il testo di stato lo
+        // ridisegna l'observation sui cambi di fase (detailText è read-only).
+        meter.setImage(self.kittCarPlayImage(for: manager))
     }
 
     private func spockStatusText(_ manager: SpockTalkManager) -> String {
@@ -253,19 +246,24 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
     private func kittCarPlayImage(for manager: SpockTalkManager) -> UIImage {
         let active = manager.isActive
         let level = self.carPlayMeterLevel(for: manager)
-        let size = CGSize(width: 96, height: 96)
+        // Rendo il meter grande quanto CarPlay consente sulla riga (i 96px
+        // fissi venivano mostrati piccoli): scalo la geometria dalla base 96.
+        let maxSize = CPListItem.maximumImageSize
+        let side = max(96.0, min(maxSize.width, maxSize.height))
+        let f = side / 96.0
+        let size = CGSize(width: side, height: side)
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { context in
             let cg = context.cgContext
             cg.clear(CGRect(origin: .zero, size: size))
 
             let columns = [
-                (x: CGFloat(16), segments: 7, width: CGFloat(17), scale: 0.72),
-                (x: CGFloat(39), segments: 11, width: CGFloat(18), scale: 1.00),
-                (x: CGFloat(63), segments: 7, width: CGFloat(17), scale: 0.72),
+                (x: CGFloat(16) * f, segments: 7, width: CGFloat(17) * f, scale: 0.72),
+                (x: CGFloat(39) * f, segments: 11, width: CGFloat(18) * f, scale: 1.00),
+                (x: CGFloat(63) * f, segments: 7, width: CGFloat(17) * f, scale: 0.72),
             ]
-            let segmentHeight: CGFloat = 5.0
-            let segmentGap: CGFloat = 3.0
+            let segmentHeight: CGFloat = 5.0 * f
+            let segmentGap: CGFloat = 3.0 * f
             let centerY = size.height / 2.0
 
             for (columnIndex, column) in columns.enumerated() {
@@ -294,7 +292,7 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
                         y: centerY + offset - (segmentHeight / 2.0),
                         width: column.width,
                         height: segmentHeight)
-                    UIBezierPath(roundedRect: rect, cornerRadius: 1.5).fill()
+                    UIBezierPath(roundedRect: rect, cornerRadius: 1.5 * f).fill()
                 }
             }
         }
