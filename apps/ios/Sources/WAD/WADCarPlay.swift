@@ -12,6 +12,8 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
     private var interfaceController: CPInterfaceController?
     private var spockTemplate: CPListTemplate?
     private var observingSpock = false
+    private var spockMeterTimer: Timer?
+    private var spockMeterFrame = 0
 
     func templateApplicationScene(
         _ templateApplicationScene: CPTemplateApplicationScene,
@@ -44,6 +46,7 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         let tabBar = CPTabBarTemplate(templates: [phone, rubrica, spock])
         interfaceController.setRootTemplate(tabBar, animated: false, completion: nil)
         self.observeSpockState()
+        self.startSpockMeterTimer()
         Task { @MainActor [weak self] in
             await self?.showPhoneBook(in: phone, rubrica: rubrica)
         }
@@ -55,6 +58,7 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
     {
         self.interfaceController = nil
         self.spockTemplate = nil
+        self.stopSpockMeterTimer()
         WADDeviceLog.shared.log("carplay", "scena disconnessa")
     }
 
@@ -139,6 +143,28 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         let manager = SpockTalkManager.shared
         var items: [CPListItem] = []
 
+        let meter = CPListItem(
+            text: manager.isActive ? "KITT VU meter" : "Spock spento",
+            detailText: manager.isActive
+                ? self.spockStatusText(manager)
+                : "Tocca il meter per avviare la conversazione")
+        meter.setImage(self.kittCarPlayImage(for: manager))
+        meter.handler = { _, completion in
+            completion()
+            Task { @MainActor in
+                if SpockTalkManager.shared.isActive {
+                    WADDeviceLog.shared.log("carplay", "spock: meter stop")
+                    SpockTalkManager.shared.stop()
+                    NodeAppModel.current?.endSpockTalkCapture()
+                } else {
+                    WADDeviceLog.shared.log("carplay", "spock: meter start")
+                    NodeAppModel.current?.beginSpockTalkCapture()
+                    SpockTalkManager.shared.start()
+                }
+            }
+        }
+        items.append(meter)
+
         let main: CPListItem
         if manager.isActive {
             main = CPListItem(text: "Termina conversazione", detailText: self.spockStatusText(manager))
@@ -189,6 +215,30 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         return CPListSection(items: items)
     }
 
+    private func startSpockMeterTimer() {
+        self.stopSpockMeterTimer()
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshSpockMeterFrame()
+            }
+        }
+        self.spockMeterTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopSpockMeterTimer() {
+        self.spockMeterTimer?.invalidate()
+        self.spockMeterTimer = nil
+    }
+
+    private func refreshSpockMeterFrame() {
+        guard self.interfaceController != nil, let template = self.spockTemplate else { return }
+        let manager = SpockTalkManager.shared
+        guard manager.isActive else { return }
+        self.spockMeterFrame += 1
+        template.updateSections([self.spockSection()])
+    }
+
     private func spockStatusText(_ manager: SpockTalkManager) -> String {
         if manager.holdMusicActive { return "Musica d'attesa — microfono in muto" }
         if manager.isMuted { return "Microfono in muto" }
@@ -197,6 +247,71 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         case .listening: "Ti ascolto"
         case .speaking: "Spock sta parlando"
         default: "In corso"
+        }
+    }
+
+    private func kittCarPlayImage(for manager: SpockTalkManager) -> UIImage {
+        let active = manager.isActive
+        let level = self.carPlayMeterLevel(for: manager)
+        let size = CGSize(width: 96, height: 96)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            let cg = context.cgContext
+            cg.clear(CGRect(origin: .zero, size: size))
+
+            let columns = [
+                (x: CGFloat(16), segments: 7, width: CGFloat(17), scale: 0.72),
+                (x: CGFloat(39), segments: 11, width: CGFloat(18), scale: 1.00),
+                (x: CGFloat(63), segments: 7, width: CGFloat(17), scale: 0.72),
+            ]
+            let segmentHeight: CGFloat = 5.0
+            let segmentGap: CGFloat = 3.0
+            let centerY = size.height / 2.0
+
+            for (columnIndex, column) in columns.enumerated() {
+                let center = column.segments / 2
+                let wave = sin((Double(self.spockMeterFrame) * 0.85) + (Double(columnIndex) * 1.45))
+                let jitter = 0.84 + (wave * 0.16)
+                let litLevel = min(1.0, max(0.0, level * column.scale * jitter))
+                let litFromCenter = Int((Double(column.segments) / 2.0 * litLevel).rounded())
+
+                for index in 0..<column.segments {
+                    let distance = abs(index - center)
+                    let lit = active && distance <= litFromCenter && litLevel > 0.02
+                    let color: UIColor
+                    if !active {
+                        color = UIColor(white: 0.30, alpha: 1.0)
+                    } else if lit {
+                        color = UIColor(red: 0.98, green: 0.06, blue: 0.02, alpha: 1.0)
+                    } else {
+                        color = UIColor(red: 0.27, green: 0.02, blue: 0.01, alpha: 1.0)
+                    }
+                    color.setFill()
+
+                    let offset = CGFloat(index - center) * (segmentHeight + segmentGap)
+                    let rect = CGRect(
+                        x: column.x,
+                        y: centerY + offset - (segmentHeight / 2.0),
+                        width: column.width,
+                        height: segmentHeight)
+                    UIBezierPath(roundedRect: rect, cornerRadius: 1.5).fill()
+                }
+            }
+        }
+        return image.withRenderingMode(.alwaysOriginal)
+    }
+
+    private func carPlayMeterLevel(for manager: SpockTalkManager) -> Double {
+        guard manager.isActive else { return 0 }
+        switch manager.phase {
+        case .connecting:
+            return 0.12
+        case .listening:
+            return 0.16
+        case .speaking:
+            return max(0.18, min(1.0, manager.speechLevel))
+        case .idle, .error:
+            return 0
         }
     }
 

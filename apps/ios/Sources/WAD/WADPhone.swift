@@ -454,6 +454,8 @@ struct WADPhoneSheet: View {
     @State private var now = Date()
     @State private var idleTab: IdleTab = .dialer
     @State private var rubricaFilter = ""
+    @State private var interniFilter = ""
+    @State private var dialerSearch = ""
     @State private var transferMode = false
     @State private var transferNumber = ""
 
@@ -607,14 +609,14 @@ struct WADPhoneSheet: View {
         VStack(spacing: 10) {
             Text("Trasferisci la chiamata")
                 .font(.subheadline.weight(.semibold))
-            TextField("Numero o interno", text: self.$transferNumber)
-                .keyboardType(.phonePad)
+            TextField("Nome o numero", text: self.$transferNumber)
                 .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
                 .padding(.horizontal, 40)
             if !self.book.interni.isEmpty {
                 ScrollView {
                     VStack(spacing: 6) {
-                        ForEach(self.book.interni) { contact in
+                        ForEach(self.matchInterni(self.transferNumber)) { contact in
                             Button { self.transferNumber = contact.ext } label: {
                                 HStack {
                                     Text(contact.name)
@@ -643,10 +645,10 @@ struct WADPhoneSheet: View {
                 .buttonStyle(.bordered)
                 Button("Diretto") { self.doTransfer(self.transferNumber) }
                     .buttonStyle(.bordered)
-                    .disabled(self.transferNumber.isEmpty)
+                    .disabled(WADPhoneBook.dialable(self.transferNumber).isEmpty)
                 Button("Assistito") { self.doAttendedTransfer(self.transferNumber) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(self.transferNumber.isEmpty)
+                    .disabled(WADPhoneBook.dialable(self.transferNumber).isEmpty)
             }
         }
         .task { await self.book.loadInterni() }
@@ -760,22 +762,38 @@ struct WADPhoneSheet: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 26)
             } else {
-                List(self.book.interni) { contact in
-                    Button {
-                        WADCallCenter.shared.reportOutgoing(to: contact.ext)
-                    } label: {
-                        self.contactRow(
-                            name: contact.name,
-                            subtitle: "interno \(contact.ext)",
-                            number: contact.ext)
+                VStack(spacing: 8) {
+                    TextField("Cerca per nome o numero", text: self.$interniFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                        .padding(.horizontal, 20)
+                    List(self.matchInterni(self.interniFilter)) { contact in
+                        Button {
+                            WADCallCenter.shared.reportOutgoing(to: contact.ext)
+                        } label: {
+                            self.contactRow(
+                                name: contact.name,
+                                subtitle: "interno \(contact.ext)",
+                                number: contact.ext)
+                        }
+                        .disabled(!self.phone.registered)
+                        .contextMenu {
+                            self.favoriteToggle(name: contact.name, number: contact.ext, kind: "interno")
+                        }
                     }
-                    .disabled(!self.phone.registered)
-                    .contextMenu {
-                        self.favoriteToggle(name: contact.name, number: contact.ext, kind: "interno")
-                    }
+                    .listStyle(.plain)
                 }
-                .listStyle(.plain)
             }
+        }
+    }
+
+    /// Filtro condiviso sugli interni: combacia sia il nome sia l'interno.
+    private func matchInterni(_ query: String) -> [WADSipContact] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return self.book.interni }
+        return self.book.interni.filter {
+            $0.name.localizedCaseInsensitiveContains(q)
+                || $0.ext.localizedCaseInsensitiveContains(q)
         }
     }
 
@@ -914,6 +932,50 @@ struct WADPhoneSheet: View {
     }
 
     private var dialerView: some View {
+        VStack(spacing: 12) {
+            TextField("Cerca interno per nome", text: self.$dialerSearch)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 40)
+            if self.dialerSearch.trimmingCharacters(in: .whitespaces).isEmpty {
+                self.dialerKeypad
+            } else {
+                self.dialerSuggestions
+            }
+        }
+    }
+
+    /// Suggerimenti interni quando si cerca per nome nel tastierino.
+    private var dialerSuggestions: some View {
+        let matches = self.matchInterni(self.dialerSearch)
+        return Group {
+            if matches.isEmpty {
+                Text("Nessun interno trovato")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 20)
+            } else {
+                List(matches) { contact in
+                    Button {
+                        WADCallCenter.shared.reportOutgoing(to: contact.ext)
+                        self.dialerSearch = ""
+                    } label: {
+                        self.contactRow(
+                            name: contact.name,
+                            subtitle: "interno \(contact.ext)",
+                            number: contact.ext)
+                    }
+                    .disabled(!self.phone.registered)
+                    .contextMenu {
+                        self.favoriteToggle(name: contact.name, number: contact.ext, kind: "interno")
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+    }
+
+    private var dialerKeypad: some View {
         VStack(spacing: 16) {
             Text(self.number.isEmpty ? "Numero o interno" : self.number)
                 .font(.title.monospacedDigit().weight(.semibold))
