@@ -23,9 +23,12 @@ struct SpockTalkView: View {
             VStack(spacing: 0) {
                 header
                 transcript
-                orb
-                    .padding(.vertical, 18)
+                kittMeter
+                    .padding(.top, 10)
+                micButton
+                    .padding(.top, 18)
                 footer
+                    .padding(.top, 12)
             }
         }
         .preferredColorScheme(.dark)
@@ -154,22 +157,66 @@ struct SpockTalkView: View {
         }
     }
 
-    private var orb: some View {
-        ZStack {
-            Circle()
-                .fill(self.orbColor.opacity(0.16))
-                .frame(width: 132, height: 132)
-                .scaleEffect(1.0 + self.manager.micLevel * 0.35)
-                .animation(.easeOut(duration: 0.12), value: self.manager.micLevel)
-            Circle()
-                .fill(self.orbColor.opacity(0.30))
-                .frame(width: 96, height: 96)
-            Image(systemName: self.orbIcon)
-                .font(.system(size: 34, weight: .medium))
-                .foregroundStyle(.white)
-                .symbolEffect(.pulse, isActive: self.manager.phase == .connecting)
+    /// VU meter stile KITT: 3 colonne di segmenti rossi che pulsano quando
+    /// Spock parla. Tap = spegne la conversazione (grigio) / la riavvia (rosso).
+    private var kittMeter: some View {
+        KittVoiceMeter(
+            level: self.manager.speechLevel,
+            active: self.manager.isActive,
+            connecting: self.manager.phase == .connecting)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if self.manager.isActive {
+                    self.manager.stop()
+                } else {
+                    self.manager.start()
+                }
+            }
+            .accessibilityLabel(self.statusText)
+            .accessibilityHint(self.manager.isActive
+                ? "Tocca per fermare la conversazione"
+                : "Tocca per avviare la conversazione")
+    }
+
+    /// Tasto MIC stile pulsantiera KITT: muta il microfono. Spock continua a
+    /// parlare ma non sente più.
+    private var micButton: some View {
+        Button {
+            self.manager.toggleMute()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: self.manager.isMuted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 15, weight: .black))
+                Text("MIC")
+                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .kerning(3)
+            }
+            .foregroundStyle(.black.opacity(0.85))
+            .frame(width: 168, height: 52)
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: self.manager.isMuted
+                                ? [Color(red: 0.55, green: 0.55, blue: 0.55), Color(red: 0.38, green: 0.38, blue: 0.38)]
+                                : [Color(red: 1.0, green: 0.72, blue: 0.25), Color(red: 0.95, green: 0.55, blue: 0.15)],
+                            startPoint: .top,
+                            endPoint: .bottom))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.black.opacity(0.5), lineWidth: 1.5)
+                    }
+                    .shadow(
+                        color: self.manager.isMuted ? .clear : Color(red: 1.0, green: 0.6, blue: 0.2).opacity(0.45),
+                        radius: 12)
+            }
         }
-        .accessibilityLabel(self.statusText)
+        .buttonStyle(.plain)
+        .disabled(!self.manager.isActive)
+        .opacity(self.manager.isActive ? 1 : 0.35)
+        .animation(.easeOut(duration: 0.15), value: self.manager.isMuted)
+        .accessibilityLabel(self.manager.isMuted ? "Riattiva microfono" : "Muta microfono")
+        .accessibilityHint("Spock continua a parlare ma non ti sente")
     }
 
     private var footer: some View {
@@ -180,38 +227,89 @@ struct SpockTalkView: View {
     }
 
     private var statusText: String {
+        if case .error = self.manager.phase { return "Errore" }
+        if self.manager.holdMusicActive { return "Musica d'attesa — microfono in muto" }
+        if self.manager.isMuted { return "Microfono in muto — Spock parla ma non ti sente" }
         switch self.manager.phase {
-        case .idle: "Pronto"
-        case .connecting: "Connessione…"
-        case .listening: "Ti ascolto"
-        case .speaking: "Spock sta parlando"
-        case .error: "Errore"
+        case .idle: return "Conversazione ferma"
+        case .connecting: return "Connessione…"
+        case .listening: return "Ti ascolto"
+        case .speaking: return "Spock sta parlando"
+        case .error: return "Errore"
         }
     }
 
     private var footerText: String {
+        if case .error = self.manager.phase { return "" }
+        if self.manager.holdMusicActive { return "Tocca MIC per riattivare il microfono." }
+        if self.manager.isMuted { return "Tocca MIC per riattivare il microfono." }
         switch self.manager.phase {
-        case .listening: "Parla pure: puoi anche interromperlo."
-        case .speaking: "Parla per interrompere."
-        case .connecting: "Collegamento al Mac mini via Tailscale…"
-        default: ""
+        case .idle: return "Tocca le barre per avviare la conversazione."
+        case .listening: return "Parla pure: puoi anche interromperlo. Tocca le barre per fermare."
+        case .speaking: return "Parla per interrompere."
+        case .connecting: return "Collegamento al Mac mini via Tailscale…"
+        case .error: return ""
+        }
+    }
+}
+
+/// VU meter in stile KITT (Supercar): tre colonne di segmenti rossi, la
+/// centrale più alta, che si accendono simmetricamente dal centro in base al
+/// livello della voce. Grigio spento quando la conversazione è ferma.
+struct KittVoiceMeter: View {
+    var level: Double
+    var active: Bool
+    var connecting: Bool
+
+    private static let sideSegments = 9
+    private static let centerSegments = 15
+    private static let segmentSize = CGSize(width: 34, height: 13)
+    private static let segmentGap: CGFloat = 5
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !self.active)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 14) {
+                self.column(segments: Self.sideSegments, level: self.columnLevel(jitter: sin(t * 9.1) * 0.5 + 0.5, scale: 0.72))
+                self.column(segments: Self.centerSegments, level: self.columnLevel(jitter: 1.0, scale: 1.0))
+                self.column(segments: Self.sideSegments, level: self.columnLevel(jitter: sin(t * 7.3 + 1.9) * 0.5 + 0.5, scale: 0.72))
+            }
+        }
+        .animation(.linear(duration: 0.06), value: self.level)
+    }
+
+    /// Livello per colonna: le laterali seguono il centro con un'oscillazione
+    /// leggera così il meter "vive" come quello di KITT invece di muoversi in blocco.
+    private func columnLevel(jitter: Double, scale: Double) -> Double {
+        guard self.active else { return 0 }
+        if self.connecting {
+            // Respiro minimo durante la connessione.
+            return 0.08 * jitter
+        }
+        let base = self.level * scale
+        return min(1.0, base * (0.75 + 0.25 * jitter))
+    }
+
+    private func column(segments: Int, level: Double) -> some View {
+        let litFromCenter = Int((Double(segments) / 2.0 * level).rounded())
+        let center = segments / 2
+        return VStack(spacing: Self.segmentGap) {
+            ForEach(0..<segments, id: \.self) { index in
+                let lit = abs(index - center) <= litFromCenter && self.active && level > 0.02
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    .fill(self.segmentColor(lit: lit))
+                    .frame(width: Self.segmentSize.width, height: Self.segmentSize.height)
+                    .shadow(color: lit ? Color.red.opacity(0.55) : .clear, radius: 6)
+            }
         }
     }
 
-    private var orbIcon: String {
-        switch self.manager.phase {
-        case .speaking: "waveform"
-        case .error: "exclamationmark.triangle"
-        default: "mic.fill"
+    private func segmentColor(lit: Bool) -> Color {
+        if !self.active {
+            return Color(white: 0.22)
         }
-    }
-
-    private var orbColor: Color {
-        switch self.manager.phase {
-        case .speaking: self.accent
-        case .error: .orange
-        case .connecting: .gray
-        default: .green
-        }
+        return lit
+            ? Color(red: 0.94, green: 0.13, blue: 0.08)
+            : Color(red: 0.30, green: 0.04, blue: 0.03)
     }
 }
