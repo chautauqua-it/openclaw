@@ -9,6 +9,7 @@ struct HomeToolbar: View {
     var talkTint: Color
     var onStatusTap: () -> Void
     var onChannelsTap: () -> Void
+    var onPhoneTap: () -> Void
     var onAgentsTap: () -> Void
     var onSettingsTap: () -> Void
 
@@ -37,6 +38,12 @@ struct HomeToolbar: View {
                         accessibilityLabel: "Chat",
                         brighten: self.brighten,
                         action: self.onChannelsTap)
+
+                    HomeToolbarActionButton(
+                        systemImage: "phone.fill",
+                        accessibilityLabel: "Telefono Mercurio",
+                        brighten: self.brighten,
+                        action: self.onPhoneTap)
 
                     HomeToolbarActionButton(
                         systemImage: "mic.fill",
