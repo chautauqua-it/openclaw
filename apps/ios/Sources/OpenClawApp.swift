@@ -610,6 +610,7 @@ struct OpenClawApp: App {
     init() {
         Self.installUncaughtExceptionLogger()
         WADDeviceLog.shared.start()
+        WADMetricSubscriber.shared.start()
         GatewaySettingsStore.bootstrapPersistence()
         let appModel = NodeAppModel()
         OpenClawAppModelRegistry.appModel = appModel
