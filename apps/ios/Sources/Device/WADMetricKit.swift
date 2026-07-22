@@ -6,7 +6,7 @@ import MetricKit
 /// dell'app (jetsam, watchdog, ecc.) che spiegano i "riavvii" senza crash
 /// report visibile. iOS consegna i payload alla prima apertura utile dopo
 /// l'evento, quindi i riscontri arrivano al lancio successivo.
-final class WADMetricSubscriber: NSObject, MXMetricManagerSubscriber {
+final class WADMetricSubscriber: NSObject, MXMetricManagerSubscriber, @unchecked Sendable {
     static let shared = WADMetricSubscriber()
 
     func start() {
