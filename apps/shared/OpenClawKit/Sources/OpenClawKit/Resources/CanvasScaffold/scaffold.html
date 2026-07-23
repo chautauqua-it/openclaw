@@ -367,6 +367,49 @@
         line-height: 1.45;
       }
 
+      /* Striscia LED rossa "alla KITT" (scanner Supercar): sostituisce il blocco
+         agenti, che vive nella chat. Un blob rosso scorre avanti/indietro su una
+         barra scura segmentata, così legge come una fila di LED. */
+      .kitt {
+        position: relative;
+        height: 22px;
+        margin: 22px 0 2px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(46, 4, 4, 0.7), rgba(12, 2, 2, 0.9));
+        border: 1px solid rgba(255, 64, 64, 0.22);
+        box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.75), 0 0 22px rgba(255, 40, 40, 0.14);
+        overflow: hidden;
+      }
+
+      .kitt-scan {
+        position: absolute;
+        top: -20%;
+        bottom: -20%;
+        left: 0;
+        width: 42%;
+        border-radius: 999px;
+        background: radial-gradient(closest-side, rgba(255, 60, 60, 0.98), rgba(255, 30, 30, 0.42) 58%, rgba(255, 20, 20, 0) 80%);
+        filter: blur(1px) saturate(1.25);
+        animation: kittScan 1.5s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+      }
+
+      .kitt::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0) 0 9px, rgba(0, 0, 0, 0.6) 9px 12px);
+        pointer-events: none;
+      }
+
+      @keyframes kittScan {
+        from { transform: translateX(-45%); }
+        to { transform: translateX(180%); }
+      }
+
+      .hero .meta-card {
+        margin-top: 16px;
+      }
+
       #openclaw-status {
         position: fixed;
         inset: 0;
@@ -482,7 +525,8 @@
 
       @media (prefers-reduced-motion: reduce) {
         body::before,
-        body::after {
+        body::after,
+        .kitt-scan {
           animation: none !important;
         }
       }
@@ -502,35 +546,19 @@
             Pair this device to your gateway to wake it only for real work, keep a live agent overview handy, and avoid battery-draining background loops.
           </p>
 
-          <div class="hero-grid">
-            <div class="meta-card">
-              <div class="meta-label">Gateway</div>
-              <div class="meta-value" id="openclaw-home-gateway">Gateway</div>
-              <div class="meta-subtitle" id="openclaw-home-gateway-caption">Connect to load your agents</div>
-            </div>
+          <div class="kitt" aria-hidden="true">
+            <span class="kitt-scan"></span>
+          </div>
 
-            <div class="meta-card">
-              <div class="meta-label">Active Agent</div>
-              <div class="agent-focus">
-                <div class="agent-badge" id="openclaw-home-active-badge">OC</div>
-                <div>
-                  <div class="name" id="openclaw-home-active-name">Main</div>
-                  <div class="caption" id="openclaw-home-active-caption">Connect to load your agents</div>
-                </div>
-              </div>
-            </div>
+          <div class="meta-card">
+            <div class="meta-label">Gateway</div>
+            <div class="meta-value" id="openclaw-home-gateway">Gateway</div>
+            <div class="meta-subtitle" id="openclaw-home-gateway-caption">Connect to load your agents</div>
           </div>
         </div>
 
-        <div class="meta-card section">
-          <div class="section-header">
-            <div class="section-title">Live agents</div>
-            <div class="section-count" id="openclaw-home-agent-count">0 agents</div>
-          </div>
-          <div class="agent-grid" id="openclaw-home-agent-grid"></div>
-          <div class="footer-note" id="openclaw-home-footer">
-            When connected, the gateway can wake the phone with a silent push instead of holding an always-on session.
-          </div>
+        <div class="footer-note" id="openclaw-home-footer">
+          When connected, the gateway can wake the phone with a silent push instead of holding an always-on session.
         </div>
       </div>
     </div>
@@ -641,19 +669,23 @@
 
           document.body.dataset.state = state.gatewayState || 'offline';
           home.root.style.display = 'flex';
-          home.eyebrow.textContent = state.eyebrow || 'Welcome to OpenClaw';
-          home.title.textContent = state.title || 'OpenClaw';
-          home.subtitle.textContent = state.subtitle || '';
-          home.gateway.textContent = state.gatewayLabel || 'Gateway';
-          home.gatewayCaption.textContent = state.gatewayState === 'connected'
+          const setText = (el, val) => { if (el) el.textContent = val; };
+          setText(home.eyebrow, state.eyebrow || 'Welcome to OpenClaw');
+          setText(home.title, state.title || 'OpenClaw');
+          setText(home.subtitle, state.subtitle || '');
+          setText(home.gateway, state.gatewayLabel || 'Gateway');
+          setText(home.gatewayCaption, state.gatewayState === 'connected'
             ? `${state.agentCount || 0} agent${state.agentCount === 1 ? '' : 's'} available`
-            : (state.activeAgentCaption || 'Connect to load your agents');
-          home.activeBadge.textContent = state.activeAgentBadge || 'OC';
-          home.activeName.textContent = state.activeAgentName || 'Main';
-          home.activeCaption.textContent = state.activeAgentCaption || '';
-          home.agentCount.textContent = `${state.agentCount || 0} agent${state.agentCount === 1 ? '' : 's'}`;
-          home.footer.textContent = state.footer || '';
+            : (state.activeAgentCaption || 'Connect to load your agents'));
+          setText(home.activeBadge, state.activeAgentBadge || 'OC');
+          setText(home.activeName, state.activeAgentName || 'Main');
+          setText(home.activeCaption, state.activeAgentCaption || '');
+          setText(home.agentCount, `${state.agentCount || 0} agent${state.agentCount === 1 ? '' : 's'}`);
+          setText(home.footer, state.footer || '');
 
+          // La griglia agenti è stata sostituita dalla striscia LED: se non c'è più
+          // nel DOM saltiamo il render senza rompere il resto della home.
+          if (!home.agentGrid) return;
           clearChildren(home.agentGrid);
           const agents = Array.isArray(state.agents) ? state.agents : [];
           if (!agents.length) {
