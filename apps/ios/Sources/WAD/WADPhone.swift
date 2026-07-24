@@ -206,6 +206,7 @@ final class WADSipManager: ObservableObject {
                 WADDeviceLog.shared.log("sip.callkit", "chiamata connessa")
                 self.callCenter?.sipCallConnected()
                 self.scheduleAudioSessionSafetyNet()
+                self.refreshAudioOutputs()
             }
         case .End, .Released:
             WADDeviceLog.shared.log("sip.callkit", "chiamata terminata stato=\(state)")
@@ -354,6 +355,86 @@ final class WADSipManager: ObservableObject {
         self.audioSessionActive = activated
         if activated { self.audioSessionForced = false }
         self.core?.activateAudioSession(activated: activated)
+    }
+
+    // MARK: Uscita audio (vivavoce / auricolare / cuffie / Bluetooth)
+
+    struct AudioOutput: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let icon: String
+        let isSpeaker: Bool
+    }
+
+    /// Uscite audio disponibili durante la chiamata (aggiornate live).
+    @Published var audioOutputs: [AudioOutput] = []
+    /// Id dell'uscita attualmente selezionata (device linphone).
+    @Published var currentAudioOutputId = ""
+
+    /// True se l'uscita corrente è l'altoparlante (vivavoce).
+    var isSpeakerOn: Bool {
+        self.audioOutputs.first(where: { $0.id == self.currentAudioOutputId })?.isSpeaker == true
+    }
+
+    private func audioLabel(_ device: AudioDevice) -> String {
+        switch device.type {
+        case .Speaker: return "Vivavoce"
+        case .Earpiece: return "Auricolare"
+        case .Bluetooth, .BluetoothA2DP: return device.deviceName.isEmpty ? "Bluetooth" : device.deviceName
+        case .Headphones, .Headset: return "Cuffie"
+        default: return device.deviceName.isEmpty ? "Audio" : device.deviceName
+        }
+    }
+
+    private func audioIcon(_ device: AudioDevice) -> String {
+        switch device.type {
+        case .Speaker: return "speaker.wave.3.fill"
+        case .Bluetooth, .BluetoothA2DP: return "airpodspro"
+        case .Headphones, .Headset: return "headphones"
+        default: return "phone.fill"
+        }
+    }
+
+    /// Rilegge dalle linphone `audioDevices` le uscite riproducibili. Pubblica
+    /// solo se cambia qualcosa: chiamabile a ogni tick del timer senza churn.
+    func refreshAudioOutputs() {
+        guard let core = self.core else {
+            if !self.audioOutputs.isEmpty { self.audioOutputs = [] }
+            if !self.currentAudioOutputId.isEmpty { self.currentAudioOutputId = "" }
+            return
+        }
+        let outs = core.audioDevices
+            .filter { $0.hasCapability(capability: .CapabilityPlay) }
+            .map {
+                AudioOutput(id: $0.id, name: self.audioLabel($0),
+                            icon: self.audioIcon($0), isSpeaker: $0.type == .Speaker)
+            }
+        if outs != self.audioOutputs { self.audioOutputs = outs }
+        let curId = (self.currentCall?.outputAudioDevice ?? core.outputAudioDevice)?.id ?? ""
+        if curId != self.currentAudioOutputId { self.currentAudioOutputId = curId }
+    }
+
+    /// Instrada l'audio verso il device scelto (sia sulla call che sul core, così
+    /// resta valido anche per la prossima chiamata).
+    func setAudioOutput(id: String) {
+        guard let core = self.core,
+              let device = core.audioDevices.first(where: { $0.id == id }) else { return }
+        if let call = self.currentCall { call.outputAudioDevice = device }
+        core.outputAudioDevice = device
+        self.currentAudioOutputId = id
+        WADDeviceLog.shared.log("sip", "uscita audio -> \(device.deviceName)")
+    }
+
+    /// Alterna vivavoce / uscita precedente (per il caso semplice a 2 device).
+    func toggleSpeaker() {
+        self.refreshAudioOutputs()
+        if self.isSpeakerOn {
+            if let other = self.audioOutputs.first(where: { !$0.isSpeaker }) {
+                self.setAudioOutput(id: other.id)
+            }
+        } else if let speaker = self.audioOutputs.first(where: { $0.isSpeaker }) {
+            self.setAudioOutput(id: speaker.id)
+        }
     }
 
     func sendDTMF(_ digit: String) {
@@ -510,13 +591,46 @@ struct WADPhoneSheet: View {
                 await AVAudioApplication.requestRecordPermission()
                 await self.phone.start()
             }
-            .onReceive(self.timer) { self.now = $0 }
+            .onReceive(self.timer) { date in
+                self.now = date
+                if self.phone.callState == .inCall { self.phone.refreshAudioOutputs() }
+            }
             .onChange(of: self.phone.callState) { _, state in
                 if state != .inCall {
                     self.transferMode = false
                     self.transferNumber = ""
                 }
             }
+        }
+    }
+
+    /// Controllo uscita audio: toggle Vivavoce nel caso semplice (auricolare +
+    /// altoparlante), menu di scelta quando ci sono anche cuffie/Bluetooth.
+    @ViewBuilder private var audioOutputControl: some View {
+        if self.phone.audioOutputs.count > 2 {
+            let current = self.phone.audioOutputs.first { $0.id == self.phone.currentAudioOutputId }
+            Menu {
+                ForEach(self.phone.audioOutputs) { out in
+                    Button { self.phone.setAudioOutput(id: out.id) } label: {
+                        Label(out.name,
+                              systemImage: out.id == self.phone.currentAudioOutputId ? "checkmark" : out.icon)
+                    }
+                }
+            } label: {
+                Label(current?.name ?? "Audio", systemImage: current?.icon ?? "speaker.wave.2.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 28)
+        } else {
+            Button { self.phone.toggleSpeaker() } label: {
+                Label("Vivavoce",
+                      systemImage: self.phone.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.wave.1.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(self.phone.isSpeakerOn ? Color.accentColor : Color.secondary)
+            .padding(.horizontal, 28)
         }
     }
 
@@ -576,6 +690,10 @@ struct WADPhoneSheet: View {
                     self.keypad { self.phone.sendDTMF($0) }
                         .padding(.horizontal, 46)
                 }
+            }
+            if self.phone.callState == .inCall
+                && !self.transferMode && self.phone.consultState == .none {
+                self.audioOutputControl
             }
             if !((self.transferMode || self.phone.consultState != .none) && self.phone.callState == .inCall) {
                 HStack(spacing: 12) {
