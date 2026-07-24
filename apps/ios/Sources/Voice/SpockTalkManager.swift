@@ -2,6 +2,7 @@ import AVFAudio
 import Foundation
 import Observation
 import OSLog
+import UIKit
 
 /// Realtime voice conversation with the Spock agent.
 ///
@@ -58,6 +59,12 @@ final class SpockTalkManager {
     private var pendingSpockText = ""
     private var audioObservers: [NSObjectProtocol] = []
 
+    // Cost telemetry: only token counts + technical metadata are shipped to the
+    // talk daemon, never transcript or audio.
+    private var sessionId = ""
+    private var sessionStartedAt = Date()
+    private var sessionModel = "gpt-realtime"
+
     private var serverBaseURL: URL {
         let raw = UserDefaults.standard.string(forKey: "spockTalk.serverURL") ?? Self.defaultServerURL
         return URL(string: raw) ?? URL(string: Self.defaultServerURL)!
@@ -71,6 +78,8 @@ final class SpockTalkManager {
         self.phase = .connecting
         self.lines = []
         self.pendingSpockText = ""
+        self.sessionId = UUID().uuidString
+        self.sessionStartedAt = Date()
         Task { await self.connect() }
     }
 
@@ -336,11 +345,22 @@ final class SpockTalkManager {
                 self.phase = .speaking
                 self.audio.play(base64: delta)
             }
+        case "session.created", "session.updated":
+            if let session = event["session"] as? [String: Any],
+               let model = session["model"] as? String, !model.isEmpty
+            {
+                self.sessionModel = model
+            }
         case "response.created":
             self.responseActive = true
         case "response.done":
             self.responseActive = false
             if self.isActive { self.phase = .listening }
+            if let response = event["response"] as? [String: Any],
+               let usage = response["usage"] as? [String: Any]
+            {
+                self.reportUsage(usage)
+            }
             // A tool finished while another response was still active (e.g. we
             // kept chatting while ask_spock ran): fire the deferred turn now,
             // otherwise the tool answer would never be spoken.
@@ -388,6 +408,34 @@ final class SpockTalkManager {
         default:
             break
         }
+    }
+
+    /// Fire-and-forget: ship Realtime token usage (no transcript, no audio) to
+    /// the talk daemon so voice cost can be tracked with the same formula as the
+    /// phone Iànua. Sent on every `response.done` that carries a usage block.
+    private func reportUsage(_ usage: [String: Any]) {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = Date()
+        let payload: [String: Any] = [
+            "sessionId": self.sessionId,
+            "startedAt": iso.string(from: self.sessionStartedAt),
+            "stoppedAt": iso.string(from: now),
+            "durationS": now.timeIntervalSince(self.sessionStartedAt),
+            "model": self.sessionModel,
+            "device": UIDevice.current.name,
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
+            "os": "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
+            "usage": usage,
+        ]
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("usage"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        URLSession.shared.dataTask(with: request).resume()
+        WADDeviceLog.shared.log("talk.realtime.usage", "usage realtime inviato al daemon")
     }
 
     private func send(json: [String: Any]) {
