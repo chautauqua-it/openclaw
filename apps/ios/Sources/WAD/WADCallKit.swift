@@ -282,7 +282,7 @@ extension WADCallCenter: @preconcurrency CXProviderDelegate {
         // accept/invite quando CallKit gestisce l'audio: senza, su cold-launch
         // da push il didActivate può non arrivare e la chiamata resta muta.
         WADSipManager.shared.configureAudioSession()
-        _ = WADSipManager.shared.answerFromCallKit()
+        WADSipManager.shared.answerFromCallKit()
         action.fulfill()
     }
 

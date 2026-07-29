@@ -11,14 +11,14 @@ import SwiftUI
 final class WADSipManager: ObservableObject {
     static let shared = WADSipManager()
 
-    enum CallState: Equatable {
+    nonisolated enum CallState: Equatable {
         case idle
         case ringingIn
         case ringingOut
         case inCall
     }
 
-    enum ConsultState: Equatable {
+    nonisolated enum ConsultState: Equatable {
         case none
         case ringing
         case connected
@@ -43,15 +43,29 @@ final class WADSipManager: ObservableObject {
     /// CallKit: aggiornato dai cambi di stato SIP e usato per la UI di sistema.
     weak var callCenter: WADCallCenter?
 
-    private var core: Core?
-    private var coreDelegate: CoreDelegate?
-    private var currentCall: Call?
-    private var domain = ""
-    private var pickupCode = ""
+    // MARK: Stato confinato sulla coda SIP
+    // Il core linphone vive su `sipQueue` (seriale): iterate, registrazioni,
+    // DNS e messaggistica SIP non passano MAI dal main thread — erano loro i
+    // micro-hang della UI segnalati dal watchdog nella b55 (autoIterate girava
+    // sul main run loop). Le proprietà `nonisolated(unsafe)` sono sicure per
+    // convenzione: si leggono/scrivono SOLO dentro sipQueue.
+    nonisolated private let sipQueue = DispatchQueue(label: "wad.sip.core", qos: .userInitiated)
+    nonisolated(unsafe) private var core: Core?
+    nonisolated(unsafe) private var coreDelegate: CoreDelegate?
+    nonisolated(unsafe) private var currentCall: Call?
+    nonisolated(unsafe) private var consultCall: Call?
+    nonisolated(unsafe) private var iterateTimer: DispatchSourceTimer?
+    nonisolated(unsafe) private var qCallState: CallState = .idle
+    nonisolated(unsafe) private var qRegistered = false
+    nonisolated(unsafe) private var qDomain = ""
+    nonisolated(unsafe) private var qPickupCode = ""
+    nonisolated(unsafe) private var qConsultRemote = ""
+    nonisolated(unsafe) private var audioSessionActive = false
+    nonisolated(unsafe) private var audioSessionForced = false
+
+    /// Specchio MainActor di "core creato e avviato" (il core vero è sulla coda).
+    private var coreReady = false
     private var starting = false
-    private var audioSessionActive = false
-    private var audioSessionForced = false
-    private var consultCall: Call?
 
     /// Scarica le credenziali da WAD e registra l'interno. Riusabile: se le
     /// credenziali cambiano nel profilo, basta richiamarla.
@@ -84,27 +98,45 @@ final class WADSipManager: ObservableObject {
         Task { await self.refreshDnd() }
         if self.configured, self.ext == config.ext, self.registered { return }
         self.ext = config.ext
-        self.domain = config.domain
-        self.pickupCode = config.pickupCode ?? ""
         self.configured = true
         self.error = nil
         do {
-            try self.setUpCore(config: config)
+            try await self.setUpCore(config: config)
+            self.coreReady = true
         } catch {
             self.error = "Telefono non inizializzabile: \(error.localizedDescription)"
             self.configured = false
+            self.coreReady = false
         }
     }
 
-    private func setUpCore(config: WADSipConfig) throws {
+    /// Esegue il setup del core sulla coda SIP: createCore/start possono
+    /// impiegare secondi (rete, DNS) e non devono bloccare il main thread.
+    private func setUpCore(config: WADSipConfig) async throws {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            self.sipQueue.async {
+                do {
+                    try self.setUpCoreOnQueue(config: config)
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    nonisolated private func setUpCoreOnQueue(config: WADSipConfig) throws {
         let startedAt = Date()
         WADDeviceLog.shared.log("sip.perf", "setUpCore begin")
-        self.tearDownCore()
+        self.tearDownCoreOnQueue()
         let factory = Factory.Instance
         WADDeviceLog.shared.log("sip.perf", "createCore begin")
         let core = try factory.createCore(configPath: "", factoryConfigPath: "", systemContext: nil)
         WADDeviceLog.shared.log("sip.perf", String(format: "createCore end %.2fs", Date().timeIntervalSince(startedAt)))
-        core.autoIterateEnabled = true
+        // Iterate manuale sulla coda SIP (vedi startIterateOnQueue): con
+        // autoIterate il core si aggancia al main run loop e ogni iterate
+        // pesante congela la UI.
+        core.autoIterateEnabled = false
         core.pushNotificationEnabled = false
         // CallKit possiede la sessione audio: linphone la attiva solo quando
         // CXProvider chiama didActivate (vedi WADCallCenter).
@@ -115,27 +147,35 @@ final class WADSipManager: ObservableObject {
         core.uploadPtime = 20
         core.adaptiveRateControlEnabled = true
 
+        let ext = config.ext
+        // I callback del delegate arrivano dentro core.iterate(), quindi già
+        // sulla coda SIP: le azioni linphone restano inline, la UI fa hop.
         let delegate = CoreDelegateStub(
             onCallStateChanged: { [weak self] _, call, state, message in
-                Task { @MainActor [weak self] in self?.handleCallState(call: call, state: state, message: message) }
+                self?.handleCallStateOnQueue(call: call, state: state, message: message)
             },
             onAccountRegistrationStateChanged: { [weak self] _, _, state, message in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    switch state {
-                    case .Ok:
+                guard let self else { return }
+                switch state {
+                case .Ok:
+                    self.qRegistered = true
+                    WADDeviceLog.shared.log("sip", "registrato interno \(ext)")
+                    Task { @MainActor in
                         self.registered = true
                         self.error = nil
-                        WADDeviceLog.shared.log("sip", "registrato interno \(self.ext)")
-                    case .Failed:
+                    }
+                case .Failed:
+                    self.qRegistered = false
+                    WADDeviceLog.shared.log("sip.error", "registrazione fallita \(ext): \(message)")
+                    Task { @MainActor in
                         self.registered = false
                         self.error = "Registrazione fallita: \(message)"
-                        WADDeviceLog.shared.log("sip.error", "registrazione fallita \(self.ext): \(message)")
-                    case .Cleared, .None:
-                        self.registered = false
-                    default:
-                        break
                     }
+                case .Cleared, .None:
+                    self.qRegistered = false
+                    Task { @MainActor in self.registered = false }
+                default:
+                    break
                 }
             })
         core.addDelegate(delegate: delegate)
@@ -159,7 +199,23 @@ final class WADSipManager: ObservableObject {
         core.defaultAccount = account
         self.core = core
         self.coreDelegate = delegate
+        self.qDomain = config.domain
+        self.qPickupCode = config.pickupCode ?? ""
+        self.startIterateOnQueue()
         WADDeviceLog.shared.log("sip.perf", String(format: "setUpCore end %.2fs", Date().timeIntervalSince(startedAt)))
+    }
+
+    /// Pompa linphone: iterate ogni 20ms sulla coda SIP (raccomandazione SDK
+    /// per l'audio in chiamata; a riposo il lavoro per tick è trascurabile).
+    nonisolated private func startIterateOnQueue() {
+        self.iterateTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: self.sipQueue)
+        timer.schedule(deadline: .now() + .milliseconds(20), repeating: .milliseconds(20), leeway: .milliseconds(5))
+        timer.setEventHandler { [weak self] in
+            self?.core?.iterate()
+        }
+        timer.resume()
+        self.iterateTimer = timer
     }
 
     private func waitForStartToFinish(timeout: TimeInterval = 10) async {
@@ -172,7 +228,9 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    private func tearDownCore() {
+    nonisolated private func tearDownCoreOnQueue() {
+        self.iterateTimer?.cancel()
+        self.iterateTimer = nil
         if let core = self.core {
             if let delegate = self.coreDelegate { core.removeDelegate(delegate: delegate) }
             core.stop()
@@ -180,20 +238,30 @@ final class WADSipManager: ObservableObject {
         self.core = nil
         self.coreDelegate = nil
         self.currentCall = nil
-        self.registered = false
-        self.callState = .idle
-        self.callStartedAt = nil
-        self.muted = false
+        self.consultCall = nil
+        self.qCallState = .idle
+        self.qRegistered = false
+        self.qConsultRemote = ""
+        self.audioSessionActive = false
+        self.audioSessionForced = false
+        Task { @MainActor in
+            self.registered = false
+            self.consultState = .none
+            self.consultRemote = ""
+            self.finishCallPublished()
+        }
     }
 
-    private func handleCallState(call: Call, state: Call.State, message: String) {
+    nonisolated private func handleCallStateOnQueue(call: Call, state: Call.State, message: String) {
         if call === self.consultCall {
-            self.handleConsultState(state: state, message: message)
+            self.handleConsultStateOnQueue(state: state, message: message)
             return
         }
         switch state {
         case .IncomingReceived, .PushIncomingReceived:
-            if self.dnd {
+            // Specchio thread-safe del DND centralizzato (aggiornato da
+            // toggleDnd/refreshDnd): il flag @Published vive sul MainActor.
+            if UserDefaults.standard.bool(forKey: "wad_sip_dnd") {
                 WADDeviceLog.shared.log("sip", "INVITE rifiutato per Non disturbare")
                 try? call.decline(reason: .Busy)
                 return
@@ -203,29 +271,36 @@ final class WADSipManager: ObservableObject {
                 return
             }
             self.currentCall = call
+            self.qCallState = .ringingIn
             let display = call.remoteAddress?.displayName ?? ""
-            self.remote = display.isEmpty ? (call.remoteAddress?.username ?? "sconosciuto") : display
-            self.callState = .ringingIn
-            WADDeviceLog.shared.log("sip.callkit", "INVITE ricevuto stato=\(state) remote=\(self.remote)")
-            self.callCenter?.sipReportedIncoming(from: self.remote)
+            let remote = display.isEmpty ? (call.remoteAddress?.username ?? "sconosciuto") : display
+            WADDeviceLog.shared.log("sip.callkit", "INVITE ricevuto stato=\(state) remote=\(remote)")
+            Task { @MainActor in
+                self.remote = remote
+                self.callState = .ringingIn
+                self.callCenter?.sipReportedIncoming(from: remote)
+            }
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
-            self.callState = .ringingOut
+            self.qCallState = .ringingOut
+            Task { @MainActor in self.callState = .ringingOut }
         case .Connected, .StreamsRunning:
-            if self.callState != .inCall {
-                self.callState = .inCall
-                self.callStartedAt = Date()
+            if self.qCallState != .inCall {
+                self.qCallState = .inCall
                 WADDeviceLog.shared.log("sip.callkit", "chiamata connessa")
-                self.callCenter?.sipCallConnected()
-                self.scheduleAudioSessionSafetyNet()
-                self.refreshAudioOutputs()
+                self.scheduleAudioSessionSafetyNetOnQueue()
+                self.refreshAudioOutputsOnQueue()
+                Task { @MainActor in
+                    self.callState = .inCall
+                    self.callStartedAt = Date()
+                    self.callCenter?.sipCallConnected()
+                }
             }
         case .End, .Released:
             WADDeviceLog.shared.log("sip.callkit", "chiamata terminata stato=\(state)")
             if let consult = self.consultCall {
                 try? consult.terminate()
                 self.consultCall = nil
-                self.consultState = .none
-                self.consultRemote = ""
+                self.qConsultRemote = ""
             }
             if self.audioSessionForced {
                 // L'attivazione l'abbiamo forzata noi, quindi CallKit non manderà
@@ -234,20 +309,29 @@ final class WADSipManager: ObservableObject {
                 self.audioSessionForced = false
                 self.audioSessionActive = false
             }
-            self.finishCall()
-            self.callCenter?.sipCallEnded()
+            self.currentCall = nil
+            self.qCallState = .idle
+            Task { @MainActor in
+                self.consultState = .none
+                self.consultRemote = ""
+                self.finishCallPublished()
+                self.callCenter?.sipCallEnded()
+            }
         case .Error:
-            self.finishCall()
-            self.callCenter?.sipCallEnded()
-            self.error = "Chiamata fallita: \(message)"
+            self.currentCall = nil
+            self.qCallState = .idle
             WADDeviceLog.shared.log("sip.error", "chiamata fallita: \(message)")
+            Task { @MainActor in
+                self.finishCallPublished()
+                self.callCenter?.sipCallEnded()
+                self.error = "Chiamata fallita: \(message)"
+            }
         default:
             break
         }
     }
 
-    private func finishCall() {
-        self.currentCall = nil
+    private func finishCallPublished() {
         self.callState = .idle
         self.remote = ""
         self.callStartedAt = nil
@@ -256,58 +340,79 @@ final class WADSipManager: ObservableObject {
 
     func call(_ number: String) {
         let num = number.filter { !$0.isWhitespace }
-        guard let core = self.core, self.registered, !num.isEmpty, self.currentCall == nil else { return }
+        guard !num.isEmpty else { return }
         self.error = nil
+        self.sipQueue.async { self.callOnQueue(num) }
+    }
+
+    nonisolated private func callOnQueue(_ num: String) {
+        guard let core = self.core, self.qRegistered, self.currentCall == nil else { return }
         do {
-            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.domain)")
+            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
             let params = try core.createCallParams(call: nil)
             self.currentCall = core.inviteAddressWithParams(addr: address, params: params)
-            self.remote = num
-            self.callState = .ringingOut
+            self.qCallState = .ringingOut
+            Task { @MainActor in
+                self.remote = num
+                self.callState = .ringingOut
+            }
         } catch {
-            self.error = "Chiamata non avviabile: \(error.localizedDescription)"
-            self.finishCall()
+            self.currentCall = nil
+            self.qCallState = .idle
+            Task { @MainActor in
+                self.finishCallPublished()
+                self.error = "Chiamata non avviabile: \(error.localizedDescription)"
+            }
         }
     }
 
     func answer() {
-        guard let call = self.currentCall, self.callState == .ringingIn else { return }
-        try? call.accept()
+        self.sipQueue.async {
+            guard let call = self.currentCall, self.qCallState == .ringingIn else { return }
+            try? call.accept()
+        }
     }
 
     /// Risposta da CallKit. Se il push ha svegliato l'app ma Mercurio non ha
     /// ancora consegnato l'INVITE al core, prova il pickup dell'interno.
-    @discardableResult
-    func answerFromCallKit() -> Bool {
-        if let call = self.currentCall, self.callState == .ringingIn {
-            WADDeviceLog.shared.log("sip.callkit", "answer: accetto currentCall")
-            try? call.accept()
-            return true
+    func answerFromCallKit() {
+        self.sipQueue.async {
+            if let call = self.currentCall, self.qCallState == .ringingIn {
+                WADDeviceLog.shared.log("sip.callkit", "answer: accetto currentCall")
+                try? call.accept()
+                return
+            }
+            let code = self.qPickupCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !code.isEmpty else {
+                WADDeviceLog.shared.log("sip.callkit", "answer: nessuna currentCall e pickup assente")
+                return
+            }
+            WADDeviceLog.shared.log("sip.callkit", "answer: fallback pickup \(code)")
+            self.callOnQueue(code)
         }
-        let code = self.pickupCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !code.isEmpty else {
-            WADDeviceLog.shared.log("sip.callkit", "answer: nessuna currentCall e pickup assente")
-            return false
-        }
-        WADDeviceLog.shared.log("sip.callkit", "answer: fallback pickup \(code)")
-        self.call(code)
-        return true
     }
 
     func hangup() {
-        guard let call = self.currentCall else { return }
-        if self.callState == .ringingIn {
-            try? call.decline(reason: .Declined)
-        } else {
-            try? call.terminate()
+        self.sipQueue.async {
+            guard let call = self.currentCall else { return }
+            if self.qCallState == .ringingIn {
+                try? call.decline(reason: .Declined)
+            } else {
+                try? call.terminate()
+            }
+            self.currentCall = nil
+            self.qCallState = .idle
+            Task { @MainActor in self.finishCallPublished() }
         }
-        self.finishCall()
     }
 
     func toggleMute() {
-        guard let core = self.core, self.callState == .inCall else { return }
-        core.micEnabled = !core.micEnabled
-        self.muted = !core.micEnabled
+        self.sipQueue.async {
+            guard let core = self.core, self.qCallState == .inCall else { return }
+            core.micEnabled = !core.micEnabled
+            let muted = !core.micEnabled
+            Task { @MainActor in self.muted = muted }
+        }
     }
 
     func toggleDnd() {
@@ -343,26 +448,30 @@ final class WADSipManager: ObservableObject {
     }
 
     func setMuted(_ muted: Bool) {
-        guard let core = self.core else { return }
-        core.micEnabled = !muted
-        self.muted = muted
+        self.sipQueue.async {
+            guard let core = self.core else { return }
+            core.micEnabled = !muted
+            Task { @MainActor in self.muted = muted }
+        }
     }
 
     /// Push VoIP ricevuto: assicura il core avviato e recupera l'INVITE pendente.
     func wakeForPush(callId: String?) async {
         WADDeviceLog.shared.log("sip.callkit", "wakeForPush callId=\(callId ?? "-")")
-        if self.core == nil { await self.start() }
-        guard let core = self.core else {
-            WADDeviceLog.shared.log("sip.error", "wakeForPush senza core pronto")
-            return
+        if !self.coreReady { await self.start() }
+        self.sipQueue.async {
+            guard let core = self.core else {
+                WADDeviceLog.shared.log("sip.error", "wakeForPush senza core pronto")
+                return
+            }
+            core.processPushNotification(callId: callId)
         }
-        core.processPushNotification(callId: callId)
     }
 
     /// Avvia il core se serve e attende la registrazione SIP: per le chiamate
     /// partite da CarPlay ad app fredda, dove il telefono WAD non è mai stato aperto.
     func ensureRegistered(timeout: TimeInterval = 8) async -> Bool {
-        if self.core == nil { await self.start() }
+        if !self.coreReady { await self.start() }
         let deadline = Date().addingTimeInterval(timeout)
         while !self.registered, Date() < deadline {
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -374,18 +483,19 @@ final class WADSipManager: ObservableObject {
     }
 
     /// Prepara la AVAudioSession per linphone: da chiamare nei handler CallKit
-    /// prima di accept/invite (requisito linphone con callkitEnabled).
+    /// prima di accept/invite (requisito linphone con callkitEnabled). La coda
+    /// seriale garantisce che venga eseguita prima dell'accept/invite accodato
+    /// subito dopo.
     func configureAudioSession() {
-        self.core?.configureAudioSession()
+        self.sipQueue.async { self.core?.configureAudioSession() }
     }
 
     /// Caso Laura 2026-07-21: cold-launch da push + pickup **201, CallKit non ha
     /// mai chiamato didActivate → audio unit mai partita, chiamata muta nei due
     /// sensi. Se entro 1.5s dalla connessione l'audio non è attivo, lo forziamo.
-    private func scheduleAudioSessionSafetyNet() {
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard let self, self.callState == .inCall, !self.audioSessionActive else { return }
+    nonisolated private func scheduleAudioSessionSafetyNetOnQueue() {
+        self.sipQueue.asyncAfter(deadline: .now() + 1.5) {
+            guard self.qCallState == .inCall, !self.audioSessionActive else { return }
             WADDeviceLog.shared.log("sip.callkit", "audio activate mancante, forzo attivazione")
             self.audioSessionForced = true
             self.audioSessionActive = true
@@ -395,14 +505,16 @@ final class WADSipManager: ObservableObject {
 
     /// Attiva/disattiva la sessione audio linphone su richiesta di CallKit.
     func activateAudioSession(_ activated: Bool) {
-        self.audioSessionActive = activated
-        if activated { self.audioSessionForced = false }
-        self.core?.activateAudioSession(activated: activated)
+        self.sipQueue.async {
+            self.audioSessionActive = activated
+            if activated { self.audioSessionForced = false }
+            self.core?.activateAudioSession(activated: activated)
+        }
     }
 
     // MARK: Uscita audio (vivavoce / auricolare / cuffie / Bluetooth)
 
-    struct AudioOutput: Identifiable, Equatable {
+    nonisolated struct AudioOutput: Identifiable, Equatable, Sendable {
         let id: String
         let name: String
         let icon: String
@@ -419,7 +531,7 @@ final class WADSipManager: ObservableObject {
         self.audioOutputs.first(where: { $0.id == self.currentAudioOutputId })?.isSpeaker == true
     }
 
-    private func audioLabel(_ device: AudioDevice) -> String {
+    nonisolated private static func audioLabel(_ device: AudioDevice) -> String {
         switch device.type {
         case .Speaker: return "Vivavoce"
         case .Earpiece: return "Auricolare"
@@ -429,7 +541,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    private func audioIcon(_ device: AudioDevice) -> String {
+    nonisolated private static func audioIcon(_ device: AudioDevice) -> String {
         switch device.type {
         case .Speaker: return "speaker.wave.3.fill"
         case .Bluetooth, .BluetoothA2DP: return "airpodspro"
@@ -441,62 +553,89 @@ final class WADSipManager: ObservableObject {
     /// Rilegge dalle linphone `audioDevices` le uscite riproducibili. Pubblica
     /// solo se cambia qualcosa: chiamabile a ogni tick del timer senza churn.
     func refreshAudioOutputs() {
+        self.sipQueue.async { self.refreshAudioOutputsOnQueue() }
+    }
+
+    nonisolated private func refreshAudioOutputsOnQueue() {
         guard let core = self.core else {
-            if !self.audioOutputs.isEmpty { self.audioOutputs = [] }
-            if !self.currentAudioOutputId.isEmpty { self.currentAudioOutputId = "" }
+            Task { @MainActor in
+                if !self.audioOutputs.isEmpty { self.audioOutputs = [] }
+                if !self.currentAudioOutputId.isEmpty { self.currentAudioOutputId = "" }
+            }
             return
         }
         let outs = core.audioDevices
             .filter { $0.hasCapability(capability: .CapabilityPlay) }
             .map {
-                AudioOutput(id: $0.id, name: self.audioLabel($0),
-                            icon: self.audioIcon($0), isSpeaker: $0.type == .Speaker)
+                AudioOutput(id: $0.id, name: Self.audioLabel($0),
+                            icon: Self.audioIcon($0), isSpeaker: $0.type == .Speaker)
             }
-        if outs != self.audioOutputs { self.audioOutputs = outs }
         let curId = (self.currentCall?.outputAudioDevice ?? core.outputAudioDevice)?.id ?? ""
-        if curId != self.currentAudioOutputId { self.currentAudioOutputId = curId }
+        Task { @MainActor in
+            if outs != self.audioOutputs { self.audioOutputs = outs }
+            if curId != self.currentAudioOutputId { self.currentAudioOutputId = curId }
+        }
     }
 
     /// Instrada l'audio verso il device scelto (sia sulla call che sul core, così
     /// resta valido anche per la prossima chiamata).
     func setAudioOutput(id: String) {
-        guard let core = self.core,
-              let device = core.audioDevices.first(where: { $0.id == id }) else { return }
+        self.sipQueue.async {
+            guard let core = self.core,
+                  let device = core.audioDevices.first(where: { $0.id == id }) else { return }
+            self.setAudioOutputOnQueue(device: device)
+        }
+    }
+
+    nonisolated private func setAudioOutputOnQueue(device: AudioDevice) {
+        guard let core = self.core else { return }
         if let call = self.currentCall { call.outputAudioDevice = device }
         core.outputAudioDevice = device
-        self.currentAudioOutputId = id
         WADDeviceLog.shared.log("sip", "uscita audio -> \(device.deviceName)")
+        let id = device.id
+        Task { @MainActor in self.currentAudioOutputId = id }
     }
 
     /// Alterna vivavoce / uscita precedente (per il caso semplice a 2 device).
+    /// La scelta avviene sulla coda SIP sui device reali, non sullo snapshot UI.
     func toggleSpeaker() {
-        self.refreshAudioOutputs()
-        if self.isSpeakerOn {
-            if let other = self.audioOutputs.first(where: { !$0.isSpeaker }) {
-                self.setAudioOutput(id: other.id)
-            }
-        } else if let speaker = self.audioOutputs.first(where: { $0.isSpeaker }) {
-            self.setAudioOutput(id: speaker.id)
+        self.sipQueue.async {
+            guard let core = self.core else { return }
+            let playable = core.audioDevices.filter { $0.hasCapability(capability: .CapabilityPlay) }
+            let current = self.currentCall?.outputAudioDevice ?? core.outputAudioDevice
+            let target = current?.type == .Speaker
+                ? playable.first { $0.type != .Speaker }
+                : playable.first { $0.type == .Speaker }
+            guard let device = target else { return }
+            self.setAudioOutputOnQueue(device: device)
         }
     }
 
     func sendDTMF(_ digit: String) {
-        guard let call = self.currentCall, self.callState == .inCall,
-              let scalar = digit.unicodeScalars.first else { return }
-        try? call.sendDtmf(dtmf: CChar(scalar.value))
+        guard let scalar = digit.unicodeScalars.first else { return }
+        let dtmf = CChar(scalar.value)
+        self.sipQueue.async {
+            guard let call = self.currentCall, self.qCallState == .inCall else { return }
+            try? call.sendDtmf(dtmf: dtmf)
+        }
     }
 
     /// Trasferimento cieco: REFER verso il numero/interno indicato.
     func transfer(to number: String) {
         let num = number.filter { !$0.isWhitespace }
-        guard let call = self.currentCall, self.callState == .inCall, !num.isEmpty else { return }
-        do {
-            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.domain)")
-            try call.transferTo(referTo: address)
-            WADDeviceLog.shared.log("sip", "trasferimento verso \(num) inviato")
-        } catch {
-            self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
-            WADDeviceLog.shared.log("sip.error", "trasferimento verso \(num) fallito: \(error.localizedDescription)")
+        guard !num.isEmpty else { return }
+        self.sipQueue.async {
+            guard let call = self.currentCall, self.qCallState == .inCall else { return }
+            do {
+                let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
+                try call.transferTo(referTo: address)
+                WADDeviceLog.shared.log("sip", "trasferimento verso \(num) inviato")
+            } catch {
+                WADDeviceLog.shared.log("sip.error", "trasferimento verso \(num) fallito: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
@@ -506,62 +645,80 @@ final class WADSipManager: ObservableObject {
     /// il destinatario del trasferimento.
     func startAttendedTransfer(to number: String) {
         let num = number.filter { !$0.isWhitespace }
-        guard let core = self.core, let call = self.currentCall, self.callState == .inCall,
-              !num.isEmpty, self.consultCall == nil else { return }
+        guard !num.isEmpty else { return }
         self.error = nil
-        do {
-            try call.pause()
-            let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.domain)")
-            let params = try core.createCallParams(call: nil)
-            self.consultCall = core.inviteAddressWithParams(addr: address, params: params)
-            self.consultRemote = num
-            self.consultState = .ringing
-            WADDeviceLog.shared.log("sip", "trasferimento assistito: consulto \(num)")
-        } catch {
-            self.error = "Consultazione non avviabile: \(error.localizedDescription)"
-            self.consultCall = nil
-            self.consultState = .none
-            self.consultRemote = ""
-            try? call.resume()
+        self.sipQueue.async {
+            guard let core = self.core, let call = self.currentCall, self.qCallState == .inCall,
+                  self.consultCall == nil else { return }
+            do {
+                try call.pause()
+                let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
+                let params = try core.createCallParams(call: nil)
+                self.consultCall = core.inviteAddressWithParams(addr: address, params: params)
+                self.qConsultRemote = num
+                WADDeviceLog.shared.log("sip", "trasferimento assistito: consulto \(num)")
+                Task { @MainActor in
+                    self.consultRemote = num
+                    self.consultState = .ringing
+                }
+            } catch {
+                self.consultCall = nil
+                self.qConsultRemote = ""
+                try? call.resume()
+                Task { @MainActor in
+                    self.error = "Consultazione non avviabile: \(error.localizedDescription)"
+                    self.consultState = .none
+                    self.consultRemote = ""
+                }
+            }
         }
     }
 
     /// Congiunge le due gambe: la chiamata principale (in attesa) viene
     /// trasferita al destinatario della consultazione.
     func completeAttendedTransfer() {
-        guard let main = self.currentCall, let consult = self.consultCall else { return }
-        do {
-            try main.transferToAnother(dest: consult)
-            WADDeviceLog.shared.log("sip", "trasferimento assistito completato verso \(self.consultRemote)")
-        } catch {
-            self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
-            WADDeviceLog.shared.log("sip.error", "trasferimento assistito fallito: \(error.localizedDescription)")
+        self.sipQueue.async {
+            guard let main = self.currentCall, let consult = self.consultCall else { return }
+            do {
+                try main.transferToAnother(dest: consult)
+                WADDeviceLog.shared.log("sip", "trasferimento assistito completato verso \(self.qConsultRemote)")
+            } catch {
+                WADDeviceLog.shared.log("sip.error", "trasferimento assistito fallito: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
     /// Annulla la consultazione e riprende la chiamata principale.
     func cancelAttendedTransfer() {
-        guard let consult = self.consultCall else { return }
-        try? consult.terminate()
-        // il resume della principale avviene alla chiusura della consult
+        self.sipQueue.async {
+            guard let consult = self.consultCall else { return }
+            try? consult.terminate()
+            // il resume della principale avviene alla chiusura della consult
+        }
     }
 
-    private func handleConsultState(state: Call.State, message: String) {
+    nonisolated private func handleConsultStateOnQueue(state: Call.State, message: String) {
         switch state {
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
-            self.consultState = .ringing
+            Task { @MainActor in self.consultState = .ringing }
         case .Connected, .StreamsRunning:
-            self.consultState = .connected
+            Task { @MainActor in self.consultState = .connected }
         case .End, .Released, .Error:
             let failed = (state == .Error)
             self.consultCall = nil
-            self.consultState = .none
-            self.consultRemote = ""
-            if failed { self.error = "Consultazione fallita: \(message)" }
+            self.qConsultRemote = ""
             // Se la principale è ancora viva (annullo o destinatario non
             // raggiungibile) la riprendiamo; se il trasferimento è andato a
             // buon fine sta terminando e il resume fallisce senza danni.
             if let main = self.currentCall { try? main.resume() }
+            Task { @MainActor in
+                self.consultState = .none
+                self.consultRemote = ""
+                if failed { self.error = "Consultazione fallita: \(message)" }
+            }
         default:
             break
         }
