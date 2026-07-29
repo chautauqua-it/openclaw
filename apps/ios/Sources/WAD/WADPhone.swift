@@ -34,6 +34,9 @@ final class WADSipManager: ObservableObject {
     @Published var ext = ""
     @Published var consultState: ConsultState = .none
     @Published var consultRemote = ""
+    /// Non disturbare: resto registrato ma rifiuto le chiamate in arrivo con
+    /// 486 Busy (il centralino applica il suo instradamento di occupato).
+    @Published var dnd = UserDefaults.standard.bool(forKey: "wad_sip_dnd")
 
     /// CallKit: aggiornato dai cambi di stato SIP e usato per la UI di sistema.
     weak var callCenter: WADCallCenter?
@@ -187,6 +190,11 @@ final class WADSipManager: ObservableObject {
         }
         switch state {
         case .IncomingReceived, .PushIncomingReceived:
+            if self.dnd {
+                WADDeviceLog.shared.log("sip", "INVITE rifiutato per Non disturbare")
+                try? call.decline(reason: .Busy)
+                return
+            }
             guard self.currentCall == nil else {
                 try? call.decline(reason: .Busy)
                 return
@@ -297,6 +305,12 @@ final class WADSipManager: ObservableObject {
         guard let core = self.core, self.callState == .inCall else { return }
         core.micEnabled = !core.micEnabled
         self.muted = !core.micEnabled
+    }
+
+    func toggleDnd() {
+        self.dnd.toggle()
+        UserDefaults.standard.set(self.dnd, forKey: "wad_sip_dnd")
+        WADDeviceLog.shared.log("sip", "Non disturbare \(self.dnd ? "attivo" : "disattivato")")
     }
 
     func setMuted(_ muted: Bool) {
@@ -586,6 +600,13 @@ struct WADPhoneSheet: View {
                     }
                     .accessibilityLabel("Chiudi telefono")
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { self.phone.toggleDnd() } label: {
+                        Image(systemName: self.phone.dnd ? "bell.slash.fill" : "bell")
+                            .foregroundStyle(self.phone.dnd ? Color.orange : Color.secondary)
+                    }
+                    .accessibilityLabel(self.phone.dnd ? "Disattiva Non disturbare" : "Attiva Non disturbare")
+                }
             }
             .task {
                 await AVAudioApplication.requestRecordPermission()
@@ -637,13 +658,15 @@ struct WADPhoneSheet: View {
     private var statusHeader: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(self.phone.registered ? Color.green : Color.red)
+                .fill(self.phone.dnd ? Color.orange : (self.phone.registered ? Color.green : Color.red))
                 .frame(width: 9, height: 9)
-            Text(self.phone.registered
-                ? "Interno \(self.phone.ext) registrato"
-                : (self.phone.configured ? "Registrazione in corso..." : "Telefono non configurato"))
+            Text(self.phone.dnd
+                ? "Non disturbare — chiamate rifiutate"
+                : (self.phone.registered
+                    ? "Interno \(self.phone.ext) registrato"
+                    : (self.phone.configured ? "Registrazione in corso..." : "Telefono non configurato")))
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(self.phone.dnd ? Color.orange : Color.secondary)
         }
     }
 

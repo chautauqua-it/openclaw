@@ -81,6 +81,27 @@ final class WADCallCenter: NSObject, ObservableObject {
     /// presente in foreground); da push invece la chiamata vera deve ancora arrivare.
     func reportIncoming(callId: String?, from: String, displayName: String, fromPush: Bool = true, completion: @escaping () -> Void) {
         let title = displayName.isEmpty ? from : displayName
+        if fromPush, WADSipManager.shared.dnd {
+            // Non disturbare attivo: iOS esige comunque un report riuscito per
+            // ogni push VoIP, quindi segnaliamo una chiamata fantasma e la
+            // chiudiamo subito senza far squillare nulla. Svegliamo comunque il
+            // core SIP: così linphone riceve l'INVITE e lo rifiuta con 486 Busy
+            // e il centralino applica l'instradamento di occupato.
+            WADDeviceLog.shared.log("sip.callkit", "push con Non disturbare attivo, report fantasma senza squillo")
+            let ghost = UUID()
+            let update = CXCallUpdate()
+            update.remoteHandle = CXHandle(type: .generic, value: title.isEmpty ? "Sconosciuto" : title)
+            update.hasVideo = false
+            self.provider.reportNewIncomingCall(with: ghost, update: update) { error in
+                if let error {
+                    WADDeviceLog.shared.log("sip.callkit", "report fantasma DND fallito: \(error.localizedDescription)")
+                }
+                self.provider.reportCall(with: ghost, endedAt: Date(), reason: .declinedElsewhere)
+                Task { @MainActor in await WADSipManager.shared.wakeForPush(callId: callId) }
+                completion()
+            }
+            return
+        }
         if fromPush, self.activeCallUUID != nil {
             // Push duplicato: linphone (app in foreground, interno registrato) ha
             // già segnalato questa chiamata a CallKit prima che il push arrivasse.
