@@ -41,6 +41,7 @@ final class WADDeviceLog: @unchecked Sendable {
     private let pongLock = NSLock()
     private var lastPong = Date()
     private var hangReported: Date?
+    private var watchdogFirstTick = true
     // In background iOS sospende il main run loop: senza questo flag il
     // watchdog segnalerebbe falsi hang al rientro in foreground.
     private var inBackground = false
@@ -71,6 +72,12 @@ final class WADDeviceLog: @unchecked Sendable {
     func start() {
         let name = UIDevice.current.name
         let os = "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)"
+        // Un cold launch in background (prewarm/PushKit) tiene il main run loop
+        // sospeso: senza questo init il watchdog lo scambia per un hang UI.
+        let launchedInBackground = UIApplication.shared.applicationState == .background
+        self.pongLock.lock()
+        self.inBackground = launchedInBackground
+        self.pongLock.unlock()
         self.queue.async {
             guard !self.started else { return }
             self.started = true
@@ -220,6 +227,16 @@ final class WADDeviceLog: @unchecked Sendable {
         timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
+            if self.watchdogFirstTick {
+                // Il lavoro pesante di launch non è un hang: riparti a contare
+                // da qui senza segnalare nulla.
+                self.watchdogFirstTick = false
+                self.pongLock.lock()
+                self.lastPong = Date()
+                self.hangReported = nil
+                self.pongLock.unlock()
+                return
+            }
             DispatchQueue.main.async {
                 self.pongLock.lock()
                 let hangStart = self.hangReported
