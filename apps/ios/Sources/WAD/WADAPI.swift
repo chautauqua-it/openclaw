@@ -264,6 +264,22 @@ actor WADAPIClient {
             options: WADRequestOptions(method: "DELETE"))
     }
 
+    /// Stato "Non disturbare" centralizzato sul PBX Mercurio: identico per
+    /// web, mobile e telefoni SIP fisici (il server compone *78/*79).
+    func sipDnd() async throws -> Bool {
+        struct Response: Decodable { let dnd: Bool }
+        let data = try await self.request("/api/sip/dnd")
+        return try self.decode(Response.self, from: data).dnd
+    }
+
+    func setSipDnd(_ on: Bool) async throws -> Bool {
+        struct Response: Decodable { let dnd: Bool }
+        let data = try await self.request(
+            "/api/sip/dnd",
+            options: WADRequestOptions(method: "POST", json: ["on": on]))
+        return try self.decode(Response.self, from: data).dnd
+    }
+
     /// Registra il token push VoIP (PushKit) dell'utente: lo usa il ponte
     /// Mercurio→APNs per svegliare l'app alle chiamate in arrivo.
     func registerVoipToken(_ token: String) async throws {

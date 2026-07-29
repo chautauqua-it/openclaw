@@ -34,9 +34,11 @@ final class WADSipManager: ObservableObject {
     @Published var ext = ""
     @Published var consultState: ConsultState = .none
     @Published var consultRemote = ""
-    /// Non disturbare: resto registrato ma rifiuto le chiamate in arrivo con
-    /// 486 Busy (il centralino applica il suo instradamento di occupato).
+    /// Non disturbare CENTRALIZZATO: lo stato vive sul PBX Mercurio (il server
+    /// WAD compone *78/*79), identico per web, mobile e telefoni SIP fisici.
+    /// UserDefaults è solo l'ultimo stato noto (per il rifiuto locale offline).
     @Published var dnd = UserDefaults.standard.bool(forKey: "wad_sip_dnd")
+    @Published var dndBusy = false
 
     /// CallKit: aggiornato dai cambi di stato SIP e usato per la UI di sistema.
     weak var callCenter: WADCallCenter?
@@ -79,6 +81,7 @@ final class WADSipManager: ObservableObject {
             self.error = "Nessun interno configurato: impostalo in WAD → Profilo → Telefono."
             return
         }
+        Task { await self.refreshDnd() }
         if self.configured, self.ext == config.ext, self.registered { return }
         self.ext = config.ext
         self.domain = config.domain
@@ -308,9 +311,35 @@ final class WADSipManager: ObservableObject {
     }
 
     func toggleDnd() {
-        self.dnd.toggle()
-        UserDefaults.standard.set(self.dnd, forKey: "wad_sip_dnd")
-        WADDeviceLog.shared.log("sip", "Non disturbare \(self.dnd ? "attivo" : "disattivato")")
+        guard !self.dndBusy else { return }
+        self.dndBusy = true
+        let want = !self.dnd
+        Task { @MainActor in
+            defer { self.dndBusy = false }
+            do {
+                let dnd = try await WADAPIClient.shared.setSipDnd(want)
+                self.dnd = dnd
+                UserDefaults.standard.set(dnd, forKey: "wad_sip_dnd")
+                WADDeviceLog.shared.log("sip", "Non disturbare \(dnd ? "attivo" : "disattivato") sul centralino")
+            } catch {
+                WADDeviceLog.shared.log("sip.error", "toggle DND su Mercurio fallito: \(error.localizedDescription)")
+                self.error = "Cambio Non disturbare fallito (centralino non raggiungibile)"
+            }
+        }
+    }
+
+    /// Rilegge lo stato DND dal centralino (può cambiare da web o telefono fisico).
+    func refreshDnd() async {
+        do {
+            let dnd = try await WADAPIClient.shared.sipDnd()
+            if dnd != self.dnd {
+                WADDeviceLog.shared.log("sip", "stato Non disturbare dal centralino: \(dnd ? "attivo" : "spento")")
+            }
+            self.dnd = dnd
+            UserDefaults.standard.set(dnd, forKey: "wad_sip_dnd")
+        } catch {
+            // centralino non raggiungibile: tengo l'ultimo stato noto
+        }
     }
 
     func setMuted(_ muted: Bool) {
@@ -602,15 +631,21 @@ struct WADPhoneSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { self.phone.toggleDnd() } label: {
-                        Image(systemName: self.phone.dnd ? "bell.slash.fill" : "bell")
-                            .foregroundStyle(self.phone.dnd ? Color.orange : Color.secondary)
+                        if self.phone.dndBusy {
+                            ProgressView()
+                        } else {
+                            Image(systemName: self.phone.dnd ? "bell.slash.fill" : "bell")
+                                .foregroundStyle(self.phone.dnd ? Color.orange : Color.secondary)
+                        }
                     }
+                    .disabled(self.phone.dndBusy)
                     .accessibilityLabel(self.phone.dnd ? "Disattiva Non disturbare" : "Attiva Non disturbare")
                 }
             }
             .task {
                 await AVAudioApplication.requestRecordPermission()
                 await self.phone.start()
+                await self.phone.refreshDnd()
             }
             .onReceive(self.timer) { date in
                 self.now = date
@@ -661,7 +696,7 @@ struct WADPhoneSheet: View {
                 .fill(self.phone.dnd ? Color.orange : (self.phone.registered ? Color.green : Color.red))
                 .frame(width: 9, height: 9)
             Text(self.phone.dnd
-                ? "Non disturbare — chiamate rifiutate"
+                ? "Non disturbare attivo sul centralino"
                 : (self.phone.registered
                     ? "Interno \(self.phone.ext) registrato"
                     : (self.phone.configured ? "Registrazione in corso..." : "Telefono non configurato")))
