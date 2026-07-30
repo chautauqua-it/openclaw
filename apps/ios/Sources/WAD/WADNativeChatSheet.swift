@@ -1,6 +1,7 @@
 import Foundation
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 private typealias WADChannelGroup = (group: String, channels: [WADChatChannel])
@@ -367,10 +368,12 @@ private struct WADChannelRow: View {
     }
 }
 
-private struct WADPendingImage: Identifiable, Equatable {
+private struct WADPendingAttachment: Identifiable, Equatable {
     let id = UUID()
     let data: Data
-    let preview: UIImage
+    let name: String
+    let mime: String
+    let preview: UIImage? // nil = documento generico (chip con icona)
 }
 
 private struct WADChatThreadView: View {
@@ -386,7 +389,8 @@ private struct WADChatThreadView: View {
     @State private var replyTarget: WADChatMessage?
     @State private var pollTask: Task<Void, Never>?
     @State private var photoItems: [PhotosPickerItem] = []
-    @State private var pendingImages: [WADPendingImage] = []
+    @State private var pendingAttachments: [WADPendingAttachment] = []
+    @State private var showDocumentPicker = false
     @State private var seenMessageIds: Set<String> = []
     @State private var notifiedMessageIds: Set<String> = []
     @StateObject private var voiceRecorder = WADVoiceRecorder()
@@ -500,18 +504,34 @@ private struct WADChatThreadView: View {
                 }
                 .padding(.horizontal, 12)
             }
-            if !self.pendingImages.isEmpty {
+            if !self.pendingAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(self.pendingImages) { image in
+                        ForEach(self.pendingAttachments) { attachment in
                             ZStack(alignment: .topTrailing) {
-                                Image(uiImage: image.preview)
-                                    .resizable()
-                                    .scaledToFill()
+                                if let preview = attachment.preview {
+                                    Image(uiImage: preview)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 56, height: 56)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    VStack(spacing: 3) {
+                                        Image(systemName: "doc.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(.secondary)
+                                        Text(attachment.name)
+                                            .font(.system(size: 8))
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.center)
+                                    }
+                                    .padding(4)
                                     .frame(width: 56, height: 56)
+                                    .background(Color.secondary.opacity(0.15))
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
                                 Button {
-                                    self.pendingImages.removeAll { $0.id == image.id }
+                                    self.pendingAttachments.removeAll { $0.id == attachment.id }
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
                                         .font(.caption)
@@ -538,6 +558,21 @@ private struct WADChatThreadView: View {
                             .font(.title3)
                     }
                     .disabled(self.sending)
+                    Button { self.showDocumentPicker = true } label: {
+                        Image(systemName: "paperclip")
+                            .font(.title3)
+                    }
+                    .disabled(self.sending)
+                    .accessibilityLabel("Allega documento")
+                    .fileImporter(
+                        isPresented: self.$showDocumentPicker,
+                        allowedContentTypes: [.item],
+                        allowsMultipleSelection: true)
+                    { result in
+                        if case let .success(urls) = result {
+                            self.importDocuments(urls)
+                        }
+                    }
                     TextField("Messaggio...", text: self.$draft, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(1...4)
@@ -614,7 +649,7 @@ private struct WADChatThreadView: View {
     }
 
     private var canSend: Bool {
-        !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !self.pendingImages.isEmpty
+        !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !self.pendingAttachments.isEmpty
     }
 
     private func isMine(_ message: WADChatMessage) -> Bool {
@@ -628,9 +663,34 @@ private struct WADChatThreadView: View {
                   let image = UIImage(data: data)
             else { continue }
             let jpeg = image.jpegData(compressionQuality: 0.82) ?? data
-            self.pendingImages.append(WADPendingImage(data: jpeg, preview: image))
+            let name = "foto-\(self.pendingAttachments.count + 1).jpg"
+            self.pendingAttachments.append(
+                WADPendingAttachment(data: jpeg, name: name, mime: "image/jpeg", preview: image))
         }
         self.photoItems = []
+    }
+
+    /// Il server WAD accetta qualsiasi tipo fino a 20 MB; qui limitiamo solo
+    /// dimensione e numero per non far esplodere memoria/upload dal telefono.
+    private func importDocuments(_ urls: [URL]) {
+        let maxBytes = 20 * 1024 * 1024
+        for url in urls.prefix(8 - self.pendingAttachments.count) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else {
+                self.error = "Impossibile leggere \(url.lastPathComponent)"
+                continue
+            }
+            guard data.count <= maxBytes else {
+                self.error = "\(url.lastPathComponent) supera i 20 MB"
+                continue
+            }
+            let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream"
+            let preview = mime.hasPrefix("image/") ? UIImage(data: data) : nil
+            self.pendingAttachments.append(
+                WADPendingAttachment(data: data, name: url.lastPathComponent, mime: mime, preview: preview))
+        }
     }
 
     private func load(initial: Bool) async {
@@ -682,8 +742,8 @@ private struct WADChatThreadView: View {
 
     private func sendDraft() async {
         let body = self.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = self.pendingImages
-        guard !body.isEmpty || !images.isEmpty else { return }
+        let attachments = self.pendingAttachments
+        guard !body.isEmpty || !attachments.isEmpty else { return }
         self.sending = true
         defer { self.sending = false }
         do {
@@ -691,20 +751,20 @@ private struct WADChatThreadView: View {
                 channelId: self.channel.id,
                 body: body,
                 replyTo: self.replyTarget?.id,
-                withAttachments: !images.isEmpty)
-            if !images.isEmpty {
-                for (index, image) in images.enumerated() {
+                withAttachments: !attachments.isEmpty)
+            if !attachments.isEmpty {
+                for attachment in attachments {
                     try await self.api.uploadAttachment(
                         messageId: message.id,
-                        name: "foto-\(index + 1).jpg",
-                        mime: "image/jpeg",
-                        data: image.data)
+                        name: attachment.name,
+                        mime: attachment.mime,
+                        data: attachment.data)
                 }
                 try await self.api.markReady(messageId: message.id)
             }
             self.draft = ""
             self.replyTarget = nil
-            self.pendingImages = []
+            self.pendingAttachments = []
             await self.load(initial: false)
             self.error = nil
         } catch {
