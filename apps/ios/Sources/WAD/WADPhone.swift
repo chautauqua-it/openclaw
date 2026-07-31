@@ -806,7 +806,12 @@ final class WADSipManager: ObservableObject {
         switch state {
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
             Task { @MainActor in self.confState = .ringing }
-        case .Connected, .StreamsRunning:
+        case .Connected:
+            // 200 OK ricevuto ma i media del terzo non sono ancora attivi: la
+            // fusione nel mixer va fatta solo a StreamsRunning. Farla qui (troppo
+            // presto) univa una gamba senza stream audio → conferenza muta.
+            break
+        case .StreamsRunning:
             if !self.qConfMerged {
                 self.qConfMerged = true
                 do {
@@ -820,6 +825,10 @@ final class WADSipManager: ObservableObject {
                     }
                     return
                 }
+                // Creando la conferenza linphone può reimpostare l'uscita audio
+                // sul default: ripubblichiamo le uscite così la UI e la rotta
+                // (vivavoce/Bluetooth) restano coerenti col mixer.
+                self.refreshAudioOutputsOnQueue()
             }
             Task { @MainActor in self.confState = .active }
         case .End, .Released, .Error:
