@@ -317,6 +317,8 @@ struct WADSipDirectory: Codable {
 struct WADSipContact: Codable, Equatable, Identifiable {
     let ext: String
     let name: String
+    /// Non disturbare sul PBX Mercurio: true/false, nil se lo stato non è noto.
+    let dnd: Bool?
     var id: String {
         self.ext
     }

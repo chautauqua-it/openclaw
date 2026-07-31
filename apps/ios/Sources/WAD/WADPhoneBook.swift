@@ -27,8 +27,12 @@ final class WADPhoneBook: ObservableObject {
     @Published var contactsDenied = false
 
     private var favoritesLoaded = false
-    private var interniLoaded = false
+    private var interniLoadedAt: Date?
     private var deviceLoaded = false
+
+    /// Oltre questa età la lista interni viene ricaricata: porta con sé lo
+    /// stato Non disturbare, che cambia durante la giornata.
+    private static let interniTTL: TimeInterval = 60
 
     func loadAll() async {
         async let favs: Void = self.loadFavorites()
@@ -45,10 +49,10 @@ final class WADPhoneBook: ObservableObject {
     }
 
     func loadInterni(force: Bool = false) async {
-        guard force || !self.interniLoaded else { return }
+        if !force, let at = self.interniLoadedAt, Date().timeIntervalSince(at) < Self.interniTTL { return }
         if let contacts = try? await WADAPIClient.shared.sipDirectory() {
             self.interni = contacts
-            self.interniLoaded = true
+            self.interniLoadedAt = Date()
         }
     }
 

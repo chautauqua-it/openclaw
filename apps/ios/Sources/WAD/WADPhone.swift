@@ -24,6 +24,12 @@ final class WADSipManager: ObservableObject {
         case connected
     }
 
+    nonisolated enum ConfState: Equatable {
+        case none
+        case ringing
+        case active
+    }
+
     @Published var configured = false
     @Published var registered = false
     @Published var callState: CallState = .idle
@@ -34,6 +40,8 @@ final class WADSipManager: ObservableObject {
     @Published var ext = ""
     @Published var consultState: ConsultState = .none
     @Published var consultRemote = ""
+    @Published var confState: ConfState = .none
+    @Published var confRemote = ""
     /// Non disturbare CENTRALIZZATO: lo stato vive sul PBX Mercurio (il server
     /// WAD compone *78/*79), identico per web, mobile e telefoni SIP fisici.
     /// UserDefaults è solo l'ultimo stato noto (per il rifiuto locale offline).
@@ -54,6 +62,9 @@ final class WADSipManager: ObservableObject {
     nonisolated(unsafe) private var coreDelegate: CoreDelegate?
     nonisolated(unsafe) private var currentCall: Call?
     nonisolated(unsafe) private var consultCall: Call?
+    nonisolated(unsafe) private var confCall: Call?
+    nonisolated(unsafe) private var qConfRemote = ""
+    nonisolated(unsafe) private var qConfMerged = false
     nonisolated(unsafe) private var iterateTimer: DispatchSourceTimer?
     nonisolated(unsafe) private var qCallState: CallState = .idle
     nonisolated(unsafe) private var qRegistered = false
@@ -239,15 +250,20 @@ final class WADSipManager: ObservableObject {
         self.coreDelegate = nil
         self.currentCall = nil
         self.consultCall = nil
+        self.confCall = nil
         self.qCallState = .idle
         self.qRegistered = false
         self.qConsultRemote = ""
+        self.qConfRemote = ""
+        self.qConfMerged = false
         self.audioSessionActive = false
         self.audioSessionForced = false
         Task { @MainActor in
             self.registered = false
             self.consultState = .none
             self.consultRemote = ""
+            self.confState = .none
+            self.confRemote = ""
             self.finishCallPublished()
         }
     }
@@ -255,6 +271,10 @@ final class WADSipManager: ObservableObject {
     nonisolated private func handleCallStateOnQueue(call: Call, state: Call.State, message: String) {
         if call === self.consultCall {
             self.handleConsultStateOnQueue(state: state, message: message)
+            return
+        }
+        if call === self.confCall {
+            self.handleConfStateOnQueue(state: state, message: message)
             return
         }
         switch state {
@@ -302,6 +322,15 @@ final class WADSipManager: ObservableObject {
                 self.consultCall = nil
                 self.qConsultRemote = ""
             }
+            if let conf = self.confCall {
+                // chiusa la principale, la conferenza locale non ha più senso:
+                // scioglila e termina anche la gamba del terzo partecipante.
+                try? self.core?.terminateConference()
+                try? conf.terminate()
+                self.confCall = nil
+                self.qConfRemote = ""
+                self.qConfMerged = false
+            }
             if self.audioSessionForced {
                 // L'attivazione l'abbiamo forzata noi, quindi CallKit non manderà
                 // il didDeactivate: chiudiamo noi la sessione audio.
@@ -314,6 +343,8 @@ final class WADSipManager: ObservableObject {
             Task { @MainActor in
                 self.consultState = .none
                 self.consultRemote = ""
+                self.confState = .none
+                self.confRemote = ""
                 self.finishCallPublished()
                 self.callCenter?.sipCallEnded()
             }
@@ -625,7 +656,7 @@ final class WADSipManager: ObservableObject {
         let num = number.filter { !$0.isWhitespace }
         guard !num.isEmpty else { return }
         self.sipQueue.async {
-            guard let call = self.currentCall, self.qCallState == .inCall else { return }
+            guard let call = self.currentCall, self.qCallState == .inCall, self.confCall == nil else { return }
             do {
                 let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
                 try call.transferTo(referTo: address)
@@ -649,7 +680,7 @@ final class WADSipManager: ObservableObject {
         self.error = nil
         self.sipQueue.async {
             guard let core = self.core, let call = self.currentCall, self.qCallState == .inCall,
-                  self.consultCall == nil else { return }
+                  self.consultCall == nil, self.confCall == nil else { return }
             do {
                 try call.pause()
                 let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
@@ -723,6 +754,95 @@ final class WADSipManager: ObservableObject {
             break
         }
     }
+
+    // MARK: Conferenza a tre (mixer locale linphone)
+
+    /// Aggiunge un partecipante alla chiamata: chiama il numero (la principale
+    /// va in pausa mentre squilla) e quando risponde unisce le due gambe nella
+    /// conferenza locale linphone (l'audio dei tre viene mixato sul telefono).
+    func startConference(with number: String) {
+        let num = number.filter { !$0.isWhitespace }
+        guard !num.isEmpty else { return }
+        self.error = nil
+        self.sipQueue.async {
+            guard let core = self.core, let call = self.currentCall, self.qCallState == .inCall,
+                  self.consultCall == nil, self.confCall == nil else { return }
+            do {
+                try call.pause()
+                let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
+                let params = try core.createCallParams(call: nil)
+                self.confCall = core.inviteAddressWithParams(addr: address, params: params)
+                self.qConfRemote = num
+                self.qConfMerged = false
+                WADDeviceLog.shared.log("sip", "conferenza: chiamo \(num)")
+                Task { @MainActor in
+                    self.confRemote = num
+                    self.confState = .ringing
+                }
+            } catch {
+                self.confCall = nil
+                self.qConfRemote = ""
+                try? call.resume()
+                Task { @MainActor in
+                    self.error = "Aggiunta partecipante non riuscita: \(error.localizedDescription)"
+                    self.confState = .none
+                    self.confRemote = ""
+                }
+            }
+        }
+    }
+
+    /// Toglie il terzo partecipante dalla conferenza (o annulla mentre squilla)
+    /// e torna alla chiamata 1:1 con l'interlocutore originale.
+    func removeConfParticipant() {
+        self.sipQueue.async {
+            guard let conf = self.confCall else { return }
+            try? conf.terminate()
+            // il ripristino della principale avviene alla chiusura della gamba
+        }
+    }
+
+    nonisolated private func handleConfStateOnQueue(state: Call.State, message: String) {
+        switch state {
+        case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
+            Task { @MainActor in self.confState = .ringing }
+        case .Connected, .StreamsRunning:
+            if !self.qConfMerged {
+                self.qConfMerged = true
+                do {
+                    try self.core?.addAllToConference()
+                    WADDeviceLog.shared.log("sip", "conferenza attiva con \(self.qConfRemote)")
+                } catch {
+                    WADDeviceLog.shared.log("sip.error", "merge conferenza fallito: \(error.localizedDescription)")
+                    try? self.confCall?.terminate()
+                    Task { @MainActor in
+                        self.error = "Unione in conferenza fallita: \(error.localizedDescription)"
+                    }
+                    return
+                }
+            }
+            Task { @MainActor in self.confState = .active }
+        case .End, .Released, .Error:
+            let failed = (state == .Error)
+            let wasMerged = self.qConfMerged
+            self.confCall = nil
+            self.qConfRemote = ""
+            self.qConfMerged = false
+            // Il terzo è uscito (o non ha risposto): sciogli la conferenza
+            // rimasta e riprendi la 1:1 con l'interlocutore originale.
+            if let main = self.currentCall {
+                if wasMerged { try? self.core?.terminateConference() }
+                try? main.resume()
+            }
+            Task { @MainActor in
+                self.confState = .none
+                self.confRemote = ""
+                if failed { self.error = "Partecipante non raggiungibile: \(message)" }
+            }
+        default:
+            break
+        }
+    }
 }
 
 // MARK: - UI telefono
@@ -739,6 +859,8 @@ struct WADPhoneSheet: View {
     @State private var dialerSearch = ""
     @State private var transferMode = false
     @State private var transferNumber = ""
+    @State private var confMode = false
+    @State private var confNumber = ""
 
     private enum IdleTab: Hashable {
         case dialer
@@ -812,6 +934,8 @@ struct WADPhoneSheet: View {
                 if state != .inCall {
                     self.transferMode = false
                     self.transferNumber = ""
+                    self.confMode = false
+                    self.confNumber = ""
                 }
             }
         }
@@ -893,11 +1017,16 @@ struct WADPhoneSheet: View {
             Text(self.phone.remote)
                 .font(.title2.bold())
             Text(self.phone.callState == .ringingOut ? "Sto chiamando..."
-                : self.phone.consultState != .none ? "In attesa" : self.elapsed)
+                : self.phone.consultState != .none || self.phone.confState == .ringing ? "In attesa"
+                : self.phone.confState == .active ? "Conferenza · \(self.elapsed)" : self.elapsed)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
             if self.phone.callState == .inCall {
-                if self.phone.consultState != .none {
+                if self.phone.confState != .none {
+                    self.confActiveView
+                } else if self.confMode {
+                    self.confAddView
+                } else if self.phone.consultState != .none {
                     self.consultView
                 } else if self.transferMode {
                     self.transferView
@@ -907,10 +1036,13 @@ struct WADPhoneSheet: View {
                 }
             }
             if self.phone.callState == .inCall
-                && !self.transferMode && self.phone.consultState == .none {
+                && !self.transferMode && !self.confMode
+                && self.phone.consultState == .none && self.phone.confState != .ringing {
                 self.audioOutputControl
             }
-            if !((self.transferMode || self.phone.consultState != .none) && self.phone.callState == .inCall) {
+            if !((self.transferMode || self.confMode
+                    || self.phone.consultState != .none || self.phone.confState != .none)
+                && self.phone.callState == .inCall) {
                 HStack(spacing: 12) {
                     if self.phone.callState == .inCall {
                         Button { self.phone.toggleMute() } label: {
@@ -921,6 +1053,11 @@ struct WADPhoneSheet: View {
                         .buttonStyle(.bordered)
                         Button { self.transferMode = true } label: {
                             Label("Trasf.", systemImage: "arrow.uturn.forward")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        Button { self.confMode = true } label: {
+                            Label("Conf.", systemImage: "person.badge.plus")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
@@ -954,6 +1091,10 @@ struct WADPhoneSheet: View {
                                 HStack {
                                     Text(contact.name)
                                         .font(.subheadline.weight(.semibold))
+                                    if contact.dnd == true {
+                                        Text("🔕")
+                                            .font(.caption2)
+                                    }
                                     Spacer()
                                     Text(contact.ext)
                                         .font(.caption)
@@ -1016,6 +1157,96 @@ struct WADPhoneSheet: View {
         self.phone.startAttendedTransfer(to: target)
         self.transferMode = false
         self.transferNumber = ""
+    }
+
+    /// Scelta del partecipante da aggiungere alla conferenza.
+    private var confAddView: some View {
+        VStack(spacing: 10) {
+            Text("Aggiungi partecipante")
+                .font(.subheadline.weight(.semibold))
+            TextField("Nome o numero", text: self.$confNumber)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 40)
+            if !self.book.interni.isEmpty {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(self.matchInterni(self.confNumber)) { contact in
+                            Button { self.confNumber = contact.ext } label: {
+                                HStack {
+                                    Text(contact.name)
+                                        .font(.subheadline.weight(.semibold))
+                                    if contact.dnd == true {
+                                        Text("🔕")
+                                            .font(.caption2)
+                                    }
+                                    Spacer()
+                                    Text(contact.ext)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(self.confNumber == contact.ext ? Color.accentColor : Color.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 40)
+                }
+                .frame(maxHeight: 190)
+            }
+            HStack(spacing: 12) {
+                Button("Annulla") {
+                    self.confMode = false
+                    self.confNumber = ""
+                }
+                .buttonStyle(.bordered)
+                Button("Chiama e unisci") { self.doConference(self.confNumber) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(WADPhoneBook.dialable(self.confNumber).isEmpty)
+            }
+        }
+        .task { await self.book.loadInterni() }
+    }
+
+    private func doConference(_ target: String) {
+        self.phone.startConference(with: target)
+        self.confMode = false
+        self.confNumber = ""
+    }
+
+    /// Conferenza in corso (o terzo partecipante che squilla).
+    private var confActiveView: some View {
+        VStack(spacing: 12) {
+            Text("👥 \(self.phone.confRemote)")
+                .font(.subheadline.weight(.semibold))
+            Text(self.phone.confState == .active
+                ? "In conferenza: vi sentite tutti e tre"
+                : "Squilla...")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button(self.phone.confState == .active ? "Rimuovi" : "Annulla") {
+                    self.phone.removeConfParticipant()
+                }
+                .buttonStyle(.bordered)
+                Button { self.phone.toggleMute() } label: {
+                    Label(self.phone.muted ? "Riattiva" : "Muta",
+                          systemImage: self.phone.muted ? "mic.slash.fill" : "mic.fill")
+                }
+                .buttonStyle(.bordered)
+                Button { self.phone.hangup() } label: {
+                    Label("Chiudi", systemImage: "phone.down.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            }
+            Text("«Chiudi» termina la chiamata per tutti")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.top, 12)
     }
 
     private var idleView: some View {
@@ -1106,8 +1337,11 @@ struct WADPhoneSheet: View {
                         } label: {
                             self.contactRow(
                                 name: contact.name,
-                                subtitle: "interno \(contact.ext)",
-                                number: contact.ext)
+                                subtitle: contact.dnd == true
+                                    ? "interno \(contact.ext) · 🔕 non disturbare"
+                                    : "interno \(contact.ext)",
+                                number: contact.ext,
+                                dnd: contact.dnd == true)
                         }
                         .disabled(!self.phone.registered)
                         .contextMenu {
@@ -1207,7 +1441,7 @@ struct WADPhoneSheet: View {
         }
     }
 
-    private func contactRow(name: String, subtitle: String, number: String?) -> some View {
+    private func contactRow(name: String, subtitle: String, number: String?, dnd: Bool = false) -> some View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
@@ -1217,13 +1451,21 @@ struct WADPhoneSheet: View {
                     .foregroundStyle(.white)
             }
             .frame(width: 36, height: 36)
+            .overlay(alignment: .bottomTrailing) {
+                if dnd {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 11, height: 11)
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                }
+            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(dnd ? Color.orange : Color.secondary)
             }
             Spacer()
             if let number, self.book.isFavorite(number: number) {
@@ -1295,8 +1537,11 @@ struct WADPhoneSheet: View {
                     } label: {
                         self.contactRow(
                             name: contact.name,
-                            subtitle: "interno \(contact.ext)",
-                            number: contact.ext)
+                            subtitle: contact.dnd == true
+                                ? "interno \(contact.ext) · 🔕 non disturbare"
+                                : "interno \(contact.ext)",
+                            number: contact.ext,
+                            dnd: contact.dnd == true)
                     }
                     .disabled(!self.phone.registered)
                     .contextMenu {
