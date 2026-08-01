@@ -33,6 +33,48 @@ private func wadSortChannelGroups(_ lhs: WADChannelGroup, _ rhs: WADChannelGroup
     lhs.group.localizedCaseInsensitiveCompare(rhs.group) == .orderedAscending
 }
 
+/// Stato "letto" per canale, persistito su UserDefaults. Un canale è in grassetto
+/// quando il suo ultimo messaggio (lastAt) è più recente dell'ultima apertura.
+/// Alla primissima comparsa di un canale ne registriamo il lastAt come baseline,
+/// così l'utente vede in grassetto solo i messaggi arrivati DA QUANDO ha guardato.
+@MainActor
+private final class WADChatReadStore: ObservableObject {
+    static let shared = WADChatReadStore()
+    private let defaultsKey = "wad.chat.reads.v1"
+    @Published private var reads: [String: Double]
+
+    private init() {
+        self.reads = (UserDefaults.standard.dictionary(forKey: "wad.chat.reads.v1") as? [String: Double]) ?? [:]
+    }
+
+    private func persist() {
+        UserDefaults.standard.set(self.reads, forKey: self.defaultsKey)
+    }
+
+    /// Registra come baseline (=letto) i canali mai visti prima, senza toccare
+    /// quelli già noti: così un canale con nuovi messaggi resta grassetto.
+    func seed(_ channels: [WADChatChannel]) {
+        var changed = false
+        for channel in channels where self.reads[channel.id] == nil {
+            let ts = wadParseTimestamp(channel.lastAt)?.timeIntervalSince1970 ?? 0
+            self.reads[channel.id] = ts
+            changed = true
+        }
+        if changed { self.persist() }
+    }
+
+    func markRead(_ id: String) {
+        self.reads[id] = Date().timeIntervalSince1970
+        self.persist()
+    }
+
+    func isUnread(_ channel: WADChatChannel) -> Bool {
+        guard let last = wadParseTimestamp(channel.lastAt)?.timeIntervalSince1970 else { return false }
+        guard let read = self.reads[channel.id] else { return false }
+        return last > read + 0.5
+    }
+}
+
 @MainActor
 private final class WADChatState: ObservableObject {
     enum Phase: Equatable {
@@ -187,6 +229,7 @@ private struct WADChannelListView: View {
     @State private var error: String?
     @State private var loading = true
     @State private var showSettings = false
+    @ObservedObject private var reads = WADChatReadStore.shared
 
     private let api = WADAPIClient.shared
 
@@ -203,7 +246,7 @@ private struct WADChannelListView: View {
                             Section("Agenti") {
                                 ForEach(self.dmChannels) { channel in
                                     NavigationLink(value: channel) {
-                                        WADAgentDMRow(channel: channel)
+                                        WADAgentDMRow(channel: channel, unread: self.reads.isUnread(channel))
                                     }
                                 }
                             }
@@ -212,7 +255,7 @@ private struct WADChannelListView: View {
                             Section(group.group) {
                                 ForEach(group.channels) { channel in
                                     NavigationLink(value: channel) {
-                                        WADChannelRow(channel: channel)
+                                        WADChannelRow(channel: channel, unread: self.reads.isUnread(channel))
                                     }
                                 }
                             }
@@ -282,6 +325,7 @@ private struct WADChannelListView: View {
         defer { self.loading = false }
         do {
             self.channels = try await self.api.channels()
+            self.reads.seed(self.channels)
             self.error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "Errore di caricamento"
@@ -314,6 +358,7 @@ private struct WADChannelListView: View {
 
 private struct WADAgentDMRow: View {
     let channel: WADChatChannel
+    var unread: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -323,30 +368,42 @@ private struct WADAgentDMRow: View {
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(self.channel.name)
-                    .font(.body.weight(.semibold))
+                    .font(.body.weight(self.unread ? .bold : .semibold))
                 Text("Messaggi diretti · anche via Siri")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer()
+            if self.unread { WADUnreadDot() }
         }
         .padding(.vertical, 4)
     }
 }
 
+/// Pallino blu per i canali con nuovi messaggi (pattern stile Mail).
+private struct WADUnreadDot: View {
+    var body: some View {
+        Circle()
+            .fill(Color.accentColor)
+            .frame(width: 9, height: 9)
+            .accessibilityLabel("Nuovi messaggi")
+    }
+}
+
 private struct WADChannelRow: View {
     let channel: WADChatChannel
+    var unread: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "number")
                 .font(.headline.weight(.bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(self.unread ? Color.accentColor : Color.secondary)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(self.channel.name)
-                    .font(.body.weight(.semibold))
+                    .font(.body.weight(self.unread ? .bold : .semibold))
                 if let topic = channel.topic, !topic.isEmpty {
                     Text(topic)
                         .font(.caption)
@@ -355,6 +412,7 @@ private struct WADChannelRow: View {
                 }
             }
             Spacer()
+            if self.unread { WADUnreadDot() }
             if let agent = channel.agent, !agent.isEmpty {
                 Text(agent)
                     .font(.caption2.weight(.semibold))
@@ -414,6 +472,7 @@ private struct WADChatThreadView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             WADSiriDefaults.rememberLastChannel(id: self.channel.id, name: self.channel.name)
+            WADChatReadStore.shared.markRead(self.channel.id)
             await self.load(initial: true)
             self.startPolling()
         }
@@ -421,6 +480,7 @@ private struct WADChatThreadView: View {
             self.pollTask?.cancel()
             self.pollTask = nil
             self.voiceRecorder.cancel()
+            WADChatReadStore.shared.markRead(self.channel.id)
         }
         .onChange(of: self.photoItems) { _, newValue in
             guard !newValue.isEmpty else { return }
