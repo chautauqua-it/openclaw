@@ -125,8 +125,26 @@ final class WADPhoneBook: ObservableObject {
     }
 
     /// Normalizza un numero della rubrica per la composizione SIP:
-    /// toglie spazi/separatori e mantiene solo cifre, +, * e #.
+    /// toglie spazi/separatori (mantiene cifre, +, * e #) e converte il formato
+    /// E.164 in quello accettato dal dialplan Mercurio, che instrada il formato
+    /// nazionale (es. 0108604179) e l'internazionale con prefisso 00, non il "+".
     nonisolated static func dialable(_ number: String) -> String {
-        String(number.unicodeScalars.filter { CharacterSet(charactersIn: "0123456789+*#").contains($0) })
+        let cleaned = String(number.unicodeScalars.filter { CharacterSet(charactersIn: "0123456789+*#").contains($0) })
+        return normalizeForMercurio(cleaned)
+    }
+
+    /// Adatta un numero già ripulito al dialplan Mercurio.
+    /// - `+39...` (Italia E.164) → nazionale: si toglie `+39` mantenendo lo 0 dei
+    ///   fissi (i cellulari iniziano con 3, senza 0).
+    /// - `+<paese>...` (estero) → prefisso internazionale `00` al posto del `+`.
+    /// - codici di servizio (`*`/`#`), interni brevi e numeri già nazionali/`00`
+    ///   restano invariati.
+    nonisolated static func normalizeForMercurio(_ raw: String) -> String {
+        guard raw.hasPrefix("+") else { return raw }
+        let digits = String(raw.dropFirst())
+        if digits.hasPrefix("39") {
+            return String(digits.dropFirst(2))
+        }
+        return "00" + digits
     }
 }

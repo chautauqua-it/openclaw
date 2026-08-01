@@ -370,7 +370,7 @@ final class WADSipManager: ObservableObject {
     }
 
     func call(_ number: String) {
-        let num = number.filter { !$0.isWhitespace }
+        let num = WADPhoneBook.dialable(number)
         guard !num.isEmpty else { return }
         self.error = nil
         self.sipQueue.async { self.callOnQueue(num) }
@@ -653,7 +653,7 @@ final class WADSipManager: ObservableObject {
 
     /// Trasferimento cieco: REFER verso il numero/interno indicato.
     func transfer(to number: String) {
-        let num = number.filter { !$0.isWhitespace }
+        let num = WADPhoneBook.dialable(number)
         guard !num.isEmpty else { return }
         self.sipQueue.async {
             guard let call = self.currentCall, self.qCallState == .inCall, self.confCall == nil else { return }
@@ -675,7 +675,7 @@ final class WADSipManager: ObservableObject {
     /// Mette in attesa la chiamata principale e apre una consultazione verso
     /// il destinatario del trasferimento.
     func startAttendedTransfer(to number: String) {
-        let num = number.filter { !$0.isWhitespace }
+        let num = WADPhoneBook.dialable(number)
         guard !num.isEmpty else { return }
         self.error = nil
         self.sipQueue.async {
@@ -761,7 +761,7 @@ final class WADSipManager: ObservableObject {
     /// va in pausa mentre squilla) e quando risponde unisce le due gambe nella
     /// conferenza locale linphone (l'audio dei tre viene mixato sul telefono).
     func startConference(with number: String) {
-        let num = number.filter { !$0.isWhitespace }
+        let num = WADPhoneBook.dialable(number)
         guard !num.isEmpty else { return }
         self.error = nil
         self.sipQueue.async {
