@@ -870,6 +870,7 @@ struct WADPhoneSheet: View {
     @State private var transferNumber = ""
     @State private var confMode = false
     @State private var confNumber = ""
+    @State private var showDtmfPad = false
 
     private enum IdleTab: Hashable {
         case dialer
@@ -879,6 +880,10 @@ struct WADPhoneSheet: View {
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private static let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"]
+    private static let keyLetters: [String: String] = [
+        "2": "A B C", "3": "D E F", "4": "G H I", "5": "J K L", "6": "M N O",
+        "7": "P Q R S", "8": "T U V", "9": "W X Y Z", "0": "+",
+    ]
     private static let avatarColors: [Color] = [
         Color(red: 0.49, green: 0.43, blue: 0.95), Color(red: 0.07, green: 0.63, blue: 0.48),
         Color(red: 0.90, green: 0.54, blue: 0.18), Color(red: 0.23, green: 0.51, blue: 0.84),
@@ -945,14 +950,46 @@ struct WADPhoneSheet: View {
                     self.transferNumber = ""
                     self.confMode = false
                     self.confNumber = ""
+                    self.showDtmfPad = false
                 }
             }
         }
     }
 
+    /// Tasto circolare con sola icona per i controlli in chiamata.
+    /// `active` = stato attivo evidenziato (es. muto o vivavoce inseriti).
+    private func controlCircle(icon: String, label: String, active: Bool = false,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 21, weight: .medium))
+                .foregroundStyle(active ? Color(.systemBackground) : Color.primary)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(active ? Color.primary : Color(.secondarySystemFill)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// Tasto circolare pieno (verde/rosso) per rispondi, rifiuta, chiama, chiudi.
+    private func actionCircle(icon: String, tint: Color, size: CGFloat = 64, label: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(Circle().fill(tint))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     /// Controllo uscita audio: toggle Vivavoce nel caso semplice (auricolare +
     /// altoparlante), menu di scelta quando ci sono anche cuffie/Bluetooth.
-    @ViewBuilder private var audioOutputControl: some View {
+    @ViewBuilder private var audioCircle: some View {
         if self.phone.audioOutputs.count > 2 {
             let current = self.phone.audioOutputs.first { $0.id == self.phone.currentAudioOutputId }
             Menu {
@@ -963,20 +1000,20 @@ struct WADPhoneSheet: View {
                     }
                 }
             } label: {
-                Label(current?.name ?? "Audio", systemImage: current?.icon ?? "speaker.wave.2.fill")
-                    .frame(maxWidth: .infinity)
+                Image(systemName: current?.icon ?? "speaker.wave.2.fill")
+                    .font(.system(size: 21, weight: .medium))
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 56, height: 56)
+                    .background(Circle().fill(Color(.secondarySystemFill)))
+                    .contentShape(Circle())
             }
-            .buttonStyle(.bordered)
-            .padding(.horizontal, 28)
+            .accessibilityLabel("Uscita audio")
         } else {
-            Button { self.phone.toggleSpeaker() } label: {
-                Label("Vivavoce",
-                      systemImage: self.phone.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.wave.1.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .tint(self.phone.isSpeakerOn ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 28)
+            self.controlCircle(
+                icon: self.phone.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.wave.1.fill",
+                label: "Vivavoce",
+                active: self.phone.isSpeakerOn
+            ) { self.phone.toggleSpeaker() }
         }
     }
 
@@ -1002,21 +1039,15 @@ struct WADPhoneSheet: View {
             Text("Chiamata in arrivo")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 16) {
-                Button { self.phone.answer() } label: {
-                    Label("Rispondi", systemImage: "phone.fill")
-                        .frame(maxWidth: .infinity)
+            HStack(spacing: 76) {
+                self.actionCircle(icon: "phone.down.fill", tint: .red, size: 68, label: "Rifiuta") {
+                    self.phone.hangup()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                Button { self.phone.hangup() } label: {
-                    Label("Rifiuta", systemImage: "phone.down.fill")
-                        .frame(maxWidth: .infinity)
+                self.actionCircle(icon: "phone.fill", tint: .green, size: 68, label: "Rispondi") {
+                    self.phone.answer()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
             }
-            .padding(.horizontal, 28)
+            .padding(.top, 10)
         }
         .padding(.top, 30)
     }
@@ -1039,49 +1070,57 @@ struct WADPhoneSheet: View {
                     self.consultView
                 } else if self.transferMode {
                     self.transferView
+                } else if self.showDtmfPad {
+                    self.keypadGrid(letters: false, keySize: 62) { self.phone.sendDTMF($0) }
+                        .padding(.horizontal, 52)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { self.showDtmfPad = false }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Nascondi tastierino")
                 } else {
-                    self.keypad { self.phone.sendDTMF($0) }
-                        .padding(.horizontal, 46)
+                    self.inCallControls
                 }
             }
-            if self.phone.callState == .inCall
-                && !self.transferMode && !self.confMode
-                && self.phone.consultState == .none && self.phone.confState != .ringing {
-                self.audioOutputControl
-            }
-            if !((self.transferMode || self.confMode
-                    || self.phone.consultState != .none || self.phone.confState != .none)
-                && self.phone.callState == .inCall) {
-                HStack(spacing: 12) {
-                    if self.phone.callState == .inCall {
-                        Button { self.phone.toggleMute() } label: {
-                            Label(self.phone.muted ? "Riattiva" : "Muta",
-                                  systemImage: self.phone.muted ? "mic.slash.fill" : "mic.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        Button { self.transferMode = true } label: {
-                            Label("Trasf.", systemImage: "arrow.uturn.forward")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        Button { self.confMode = true } label: {
-                            Label("Conf.", systemImage: "person.badge.plus")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    Button { self.phone.hangup() } label: {
-                        Label("Chiudi", systemImage: "phone.down.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
+            if self.phone.callState == .ringingOut
+                || (self.phone.callState == .inCall
+                    && !self.transferMode && !self.confMode
+                    && self.phone.consultState == .none && self.phone.confState == .none) {
+                self.actionCircle(icon: "phone.down.fill", tint: .red, size: 68, label: "Chiudi chiamata") {
+                    self.phone.hangup()
                 }
-                .padding(.horizontal, 28)
+                .padding(.top, 6)
             }
         }
         .padding(.top, 20)
+    }
+
+    /// Fila di controlli in chiamata, sole icone: muta, tastierino DTMF,
+    /// uscita audio, trasferimento, conferenza.
+    private var inCallControls: some View {
+        HStack(spacing: 14) {
+            self.controlCircle(
+                icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
+                label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
+                active: self.phone.muted
+            ) { self.phone.toggleMute() }
+            self.controlCircle(icon: "circle.grid.3x3.fill", label: "Tastierino") {
+                withAnimation(.easeInOut(duration: 0.15)) { self.showDtmfPad = true }
+            }
+            self.audioCircle
+            self.controlCircle(icon: "arrow.uturn.forward", label: "Trasferisci chiamata") {
+                self.transferMode = true
+            }
+            self.controlCircle(icon: "person.badge.plus", label: "Conferenza a tre") {
+                self.confMode = true
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var transferView: some View {
@@ -1235,23 +1274,21 @@ struct WADPhoneSheet: View {
                 : "Squilla...")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Button(self.phone.confState == .active ? "Rimuovi" : "Annulla") {
-                    self.phone.removeConfParticipant()
+            HStack(spacing: 18) {
+                self.controlCircle(
+                    icon: "person.fill.badge.minus",
+                    label: self.phone.confState == .active ? "Rimuovi partecipante" : "Annulla"
+                ) { self.phone.removeConfParticipant() }
+                self.controlCircle(
+                    icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
+                    label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
+                    active: self.phone.muted
+                ) { self.phone.toggleMute() }
+                self.actionCircle(icon: "phone.down.fill", tint: .red, size: 56, label: "Chiudi per tutti") {
+                    self.phone.hangup()
                 }
-                .buttonStyle(.bordered)
-                Button { self.phone.toggleMute() } label: {
-                    Label(self.phone.muted ? "Riattiva" : "Muta",
-                          systemImage: self.phone.muted ? "mic.slash.fill" : "mic.fill")
-                }
-                .buttonStyle(.bordered)
-                Button { self.phone.hangup() } label: {
-                    Label("Chiudi", systemImage: "phone.down.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
             }
-            Text("«Chiudi» termina la chiamata per tutti")
+            Text("Il tasto rosso termina la chiamata per tutti")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -1563,52 +1600,70 @@ struct WADPhoneSheet: View {
     }
 
     private var dialerKeypad: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             Text(self.number.isEmpty ? "Numero o interno" : self.number)
-                .font(.title.monospacedDigit().weight(.semibold))
+                .font(.system(size: 30, weight: .regular, design: .rounded).monospacedDigit())
                 .foregroundStyle(self.number.isEmpty ? .tertiary : .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
                 .frame(maxWidth: .infinity)
+                .frame(height: 38)
                 .padding(.horizontal, 30)
-            self.keypad { self.number += $0 }
-                .padding(.horizontal, 40)
-            HStack(spacing: 16) {
+            self.keypadGrid { self.number += $0 }
+                .padding(.horizontal, 44)
+            // Come il Telefono iOS: chiama centrato sotto lo 0, cancella a destra.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 0) {
+                Color.clear.frame(width: 74, height: 74)
+                self.actionCircle(icon: "phone.fill", tint: .green, size: 74, label: "Chiama") {
+                    WADCallCenter.shared.reportOutgoing(to: self.number)
+                    self.number = ""
+                }
+                .disabled(!self.phone.registered || self.number.isEmpty)
+                .opacity(!self.phone.registered || self.number.isEmpty ? 0.35 : 1)
                 Button {
                     self.number = String(self.number.dropLast())
                 } label: {
-                    Image(systemName: "delete.left")
-                        .frame(width: 54, height: 54)
+                    Image(systemName: "delete.left.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 74, height: 74)
+                        .contentShape(Circle())
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .disabled(self.number.isEmpty)
-                Button {
-                    WADCallCenter.shared.reportOutgoing(to: self.number)
-                    self.number = ""
-                } label: {
-                    Image(systemName: "phone.fill")
-                        .font(.title3)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .disabled(!self.phone.registered || self.number.isEmpty)
+                .opacity(self.number.isEmpty ? 0 : 1)
+                .simultaneousGesture(LongPressGesture().onEnded { _ in self.number = "" })
+                .accessibilityLabel("Cancella cifra (tieni premuto per svuotare)")
             }
-            .padding(.horizontal, 40)
+            .padding(.horizontal, 44)
         }
     }
 
-    private func keypad(action: @escaping (String) -> Void) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+    /// Tastierino a tasti circolari stile Telefono iOS. Con `letters` mostra
+    /// le lettere sotto le cifre (solo nel dialer, non nel DTMF in chiamata).
+    private func keypadGrid(letters: Bool = true, keySize: CGFloat = 74,
+                            action: @escaping (String) -> Void) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 12) {
             ForEach(Self.keys, id: \.self) { key in
                 Button { action(key) } label: {
-                    Text(key)
-                        .font(.title2.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
+                    VStack(spacing: 0) {
+                        Text(key)
+                            .font(.system(size: key == "*" ? keySize * 0.5 : keySize * 0.42,
+                                          weight: .regular, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .frame(height: keySize * 0.46)
+                        if letters {
+                            Text(Self.keyLetters[key] ?? " ")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(height: 10)
+                        }
+                    }
+                    .frame(width: keySize, height: keySize)
+                    .background(Circle().fill(Color(.secondarySystemFill)))
+                    .contentShape(Circle())
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
             }
         }
     }
