@@ -319,6 +319,11 @@ struct WADSipContact: Codable, Equatable, Identifiable {
     let name: String
     /// Non disturbare sul PBX Mercurio: true/false, nil se lo stato non è noto.
     let dnd: Bool?
+    /// Registrato sul PBX (telefono online): true/false, nil se lo stato non è
+    /// noto (Mercurio non raggiunto). Alimenta il semaforo presenza.
+    let registered: Bool?
+    /// Occupato in una chiamata attiva: true/false, nil se non noto.
+    let busy: Bool?
     var id: String {
         self.ext
     }

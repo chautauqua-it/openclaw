@@ -1168,6 +1168,9 @@ struct WADPhoneSheet: View {
                         ForEach(self.matchInterni(self.transferNumber)) { contact in
                             Button { self.transferNumber = contact.ext } label: {
                                 HStack {
+                                    if let dot = Self.presenceColor(registered: contact.registered, busy: contact.busy) {
+                                        Circle().fill(dot).frame(width: 8, height: 8)
+                                    }
                                     Text(contact.name)
                                         .font(.subheadline.weight(.semibold))
                                     if contact.dnd == true {
@@ -1253,6 +1256,9 @@ struct WADPhoneSheet: View {
                         ForEach(self.matchInterni(self.confNumber)) { contact in
                             Button { self.confNumber = contact.ext } label: {
                                 HStack {
+                                    if let dot = Self.presenceColor(registered: contact.registered, busy: contact.busy) {
+                                        Circle().fill(dot).frame(width: 8, height: 8)
+                                    }
                                     Text(contact.name)
                                         .font(.subheadline.weight(.semibold))
                                     if contact.dnd == true {
@@ -1408,17 +1414,17 @@ struct WADPhoneSheet: View {
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .padding(.horizontal, 20)
+                    self.presenceLegend
                     List(self.matchInterni(self.interniFilter)) { contact in
                         Button {
                             WADCallCenter.shared.reportOutgoing(to: contact.ext)
                         } label: {
                             self.contactRow(
                                 name: contact.name,
-                                subtitle: contact.dnd == true
-                                    ? "interno \(contact.ext) · 🔕 non disturbare"
-                                    : "interno \(contact.ext)",
+                                subtitle: self.interniSubtitle(contact),
                                 number: contact.ext,
-                                dnd: contact.dnd == true)
+                                dnd: contact.dnd == true,
+                                presence: Self.presenceColor(registered: contact.registered, busy: contact.busy))
                         }
                         .disabled(!self.phone.registered)
                         .contextMenu {
@@ -1426,6 +1432,15 @@ struct WADPhoneSheet: View {
                         }
                     }
                     .listStyle(.plain)
+                    // Semaforo "vivo": lo stato occupato/registrato cambia in
+                    // fretta, quindi finché la lista è aperta si rinfresca da
+                    // sola (il .task si annulla quando si cambia scheda).
+                    .task {
+                        while !Task.isCancelled {
+                            await self.book.loadInterni(force: true)
+                            try? await Task.sleep(nanoseconds: 25 * 1_000_000_000)
+                        }
+                    }
                 }
             }
         }
@@ -1518,7 +1533,52 @@ struct WADPhoneSheet: View {
         }
     }
 
-    private func contactRow(name: String, subtitle: String, number: String?, dnd: Bool = false) -> some View {
+    /// Semaforo presenza dell'interno: 🔴 occupato in chiamata, 🟠 non
+    /// registrato (telefono offline), 🟢 libero (registrato e non occupato).
+    /// nil = stato non noto (Mercurio non raggiunto) → nessun pallino.
+    private static func presenceColor(registered: Bool?, busy: Bool?) -> Color? {
+        if busy == true { return .red }
+        if registered == false { return .orange }
+        if registered == true { return .green }
+        return nil
+    }
+
+    /// Sottotitolo dell'interno con lo stato leggibile (occupato / non
+    /// raggiungibile / non disturbare) accanto al numero.
+    private func interniSubtitle(_ c: WADSipContact) -> String {
+        var s = "interno \(c.ext)"
+        if c.busy == true {
+            s += " · occupato"
+        } else if c.registered == false {
+            s += " · non raggiungibile"
+        }
+        if c.dnd == true { s += " · 🔕 non disturbare" }
+        return s
+    }
+
+    private var presenceLegend: some View {
+        HStack(spacing: 12) {
+            self.legendItem(color: .green, label: "libero")
+            self.legendItem(color: .orange, label: "non reg.")
+            self.legendItem(color: .red, label: "occupato")
+            HStack(spacing: 3) {
+                Text("🔕").font(.caption2)
+                Text("non dist.").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+    }
+
+    private func legendItem(color: Color, label: String) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func contactRow(name: String, subtitle: String, number: String?, dnd: Bool = false,
+                            presence: Color? = nil) -> some View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
@@ -1529,17 +1589,23 @@ struct WADPhoneSheet: View {
             }
             .frame(width: 36, height: 36)
             .overlay(alignment: .bottomTrailing) {
-                if dnd {
+                if let presence {
                     Circle()
-                        .fill(Color.orange)
+                        .fill(presence)
                         .frame(width: 11, height: 11)
                         .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
+                HStack(spacing: 4) {
+                    Text(name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if dnd {
+                        Text("🔕")
+                            .font(.caption2)
+                    }
+                }
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(dnd ? Color.orange : Color.secondary)
