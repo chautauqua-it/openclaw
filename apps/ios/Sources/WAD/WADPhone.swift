@@ -901,6 +901,11 @@ struct WADPhoneSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 18) {
+                Image("IanuaMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 34)
+                    .accessibilityLabel("Ianua")
                 self.statusHeader
                 if let error = self.phone.error {
                     Text(error)
