@@ -498,6 +498,25 @@ private struct HomeCanvasPayload: Codable {
     var agentCount: Int
     var agents: [HomeCanvasAgentCard]
     var footer: String
+    /// Grafica per-tenant: la prima pagina legge questi valori dal payload.
+    /// Default = brand Iànua; il JSON del server li può sovrascrivere per tenant.
+    var theme: HomeCanvasTheme = .ianua
+}
+
+private struct HomeCanvasTheme: Codable {
+    var background: String
+    var accent: String
+    var accentStrong: String
+    var logo: String
+    var marketing: String
+
+    static let ianua = HomeCanvasTheme(
+        background: "#ffffff",
+        accent: "#2278f8",
+        accentStrong: "#1560d8",
+        logo: "ianua-logo.png",
+        marketing:
+        "La tua postazione intelligente: chat, telefono e assistente in un unico posto. Ianua lavora con te.")
 }
 
 private struct HomeCanvasAgentCard: Codable {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>OpenClaw</title>
+    <title>Ianua</title>
     <script>
       (() => {
         try {
@@ -22,20 +22,22 @@
       })();
     </script>
     <style>
+      /* Prima pagina Iànua: tema CHIARO (sfondo bianco). Le altre schermate
+         dell'app restano scure. Colori/logo/testi arrivano dal `theme` nel
+         payload (multi-tenant): qui restano i default del brand Iànua, che il
+         JSON del server può sovrascrivere senza ricompilare. */
       :root {
-        color-scheme: dark;
-        --bg: #06070b;
-        --panel: rgba(14, 17, 24, 0.74);
-        --panel-strong: rgba(18, 23, 32, 0.86);
-        --line: rgba(255, 255, 255, 0.1);
-        --line-strong: rgba(255, 255, 255, 0.18);
-        --text: rgba(255, 255, 255, 0.96);
-        --muted: rgba(222, 229, 239, 0.72);
-        --soft: rgba(222, 229, 239, 0.5);
-        --accent: #8ec5ff;
-        --accent-strong: #5b9dff;
-        --accent-warm: #ff9159;
-        --accent-rose: #ff5fa2;
+        color-scheme: light;
+        --bg: #ffffff;
+        --panel: #ffffff;
+        --panel-strong: #f5f7fb;
+        --line: rgba(11, 18, 32, 0.10);
+        --line-strong: rgba(11, 18, 32, 0.16);
+        --text: #0b1220;
+        --muted: #55617a;
+        --soft: #8a93a7;
+        --accent: #2278f8;
+        --accent-strong: #1560d8;
         --state: #7d8ca3;
         --safe-top: env(safe-area-inset-top, 0px);
         --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -49,54 +51,40 @@
       body {
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
         background:
-          radial-gradient(900px 640px at 12% 10%, rgba(91, 157, 255, 0.36), rgba(0, 0, 0, 0) 58%),
-          radial-gradient(840px 600px at 88% 16%, rgba(255, 95, 162, 0.24), rgba(0, 0, 0, 0) 62%),
-          radial-gradient(960px 720px at 50% 100%, rgba(255, 145, 89, 0.18), rgba(0, 0, 0, 0) 60%),
-          linear-gradient(180deg, #090b11 0%, #05060a 100%);
+          radial-gradient(900px 640px at 12% 6%, color-mix(in srgb, var(--accent) 12%, transparent), rgba(255, 255, 255, 0) 60%),
+          radial-gradient(820px 600px at 88% 12%, color-mix(in srgb, var(--accent) 7%, transparent), rgba(255, 255, 255, 0) 62%),
+          var(--bg);
         color: var(--text);
         overflow: hidden;
       }
 
-      body::before,
-      body::after {
+      body::before {
         content: "";
         position: fixed;
         inset: -10%;
         pointer-events: none;
-      }
-
-      body::before {
         background:
           repeating-linear-gradient(
             90deg,
-            rgba(255, 255, 255, 0.025) 0,
-            rgba(255, 255, 255, 0.025) 1px,
+            rgba(11, 18, 32, 0.03) 0,
+            rgba(11, 18, 32, 0.03) 1px,
             transparent 1px,
             transparent 52px
           ),
           repeating-linear-gradient(
             0deg,
-            rgba(255, 255, 255, 0.025) 0,
-            rgba(255, 255, 255, 0.025) 1px,
+            rgba(11, 18, 32, 0.03) 0,
+            rgba(11, 18, 32, 0.03) 1px,
             transparent 1px,
             transparent 52px
           );
-        opacity: 0.42;
+        opacity: 0.5;
         transform: rotate(-7deg);
       }
 
-      body::after {
-        background:
-          radial-gradient(700px 460px at 20% 18%, rgba(142, 197, 255, 0.18), rgba(0, 0, 0, 0) 62%),
-          radial-gradient(720px 520px at 84% 20%, rgba(255, 95, 162, 0.14), rgba(0, 0, 0, 0) 66%),
-          radial-gradient(860px 620px at 52% 88%, rgba(255, 145, 89, 0.14), rgba(0, 0, 0, 0) 64%);
-        filter: blur(28px);
-        opacity: 0.95;
-      }
-
-      body[data-state="connected"] { --state: #61d58b; }
-      body[data-state="connecting"] { --state: #ffd05f; }
-      body[data-state="error"] { --state: #ff6d6d; }
+      body[data-state="connected"] { --state: #23a45a; }
+      body[data-state="connecting"] { --state: #d69a00; }
+      body[data-state="error"] { --state: #e0483c; }
       body[data-state="offline"] { --state: #95a3b9; }
 
       canvas {
@@ -136,32 +124,48 @@
         position: relative;
         overflow: hidden;
         border-radius: 28px;
-        background: linear-gradient(180deg, rgba(18, 24, 34, 0.86), rgba(10, 13, 19, 0.94));
+        background: var(--panel);
         border: 1px solid var(--line);
-        box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42);
-        padding: 22px 22px 18px;
+        box-shadow: 0 20px 60px rgba(11, 18, 32, 0.08);
+        padding: 28px 24px 22px;
+        text-align: center;
       }
 
       .hero::before {
         content: "";
         position: absolute;
-        inset: -30% auto auto -20%;
-        width: 240px;
-        height: 240px;
-        border-radius: 999px;
-        background: radial-gradient(circle, rgba(142, 197, 255, 0.18), rgba(0, 0, 0, 0));
+        inset: -40% -20% auto -20%;
+        height: 260px;
+        background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 16%, transparent), rgba(0, 0, 0, 0) 70%);
         pointer-events: none;
+      }
+
+      .brand {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .brand-logo {
+        display: block;
+        height: 104px;
+        width: auto;
+        max-width: 72%;
+        object-fit: contain;
+        margin: 2px 0 4px;
       }
 
       .eyebrow {
         display: inline-flex;
         align-items: center;
         gap: 9px;
-        padding: 8px 12px;
+        padding: 7px 12px;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        color: var(--muted);
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+        color: var(--accent-strong);
         font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -176,7 +180,7 @@
         height: 9px;
         border-radius: 999px;
         background: var(--state);
-        box-shadow: 0 0 18px color-mix(in srgb, var(--state) 68%, transparent);
+        box-shadow: 0 0 14px color-mix(in srgb, var(--state) 60%, transparent);
       }
 
       #openclaw-home-eyebrow {
@@ -188,196 +192,47 @@
 
       .hero h1 {
         margin: 18px 0 0;
-        font-size: clamp(32px, 7vw, 52px);
-        line-height: 0.98;
+        font-size: clamp(30px, 6.5vw, 46px);
+        line-height: 1.0;
         letter-spacing: -0.04em;
+        color: var(--text);
       }
 
-      .hero p {
-        margin: 14px 0 0;
+      .hero p.subtitle {
+        margin: 14px auto 0;
         font-size: 16px;
         line-height: 1.5;
         color: var(--muted);
-        max-width: 32rem;
+        max-width: 34rem;
       }
 
-      .hero-grid {
-        display: grid;
-        grid-template-columns: 1.2fr 1fr;
-        gap: 12px;
-        margin-top: 22px;
-      }
-
-      .meta-card,
-      .agent-card {
-        border-radius: 22px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-      }
-
-      .meta-card {
-        padding: 16px 16px 15px;
-      }
-
-      .meta-label {
-        font-size: 11px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--soft);
-      }
-
-      .meta-value {
-        margin-top: 8px;
-        font-size: 24px;
-        font-weight: 700;
-        letter-spacing: -0.03em;
-        overflow-wrap: anywhere;
-      }
-
-      .meta-subtitle {
-        margin-top: 6px;
-        color: var(--muted);
-        font-size: 13px;
-        line-height: 1.4;
-      }
-
-      .agent-focus {
-        display: flex;
-        align-items: flex-start;
-        gap: 14px;
-        margin-top: 8px;
-      }
-
-      .agent-badge {
-        width: 56px;
-        height: 56px;
-        border-radius: 18px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background:
-          linear-gradient(135deg, rgba(142, 197, 255, 0.22), rgba(91, 157, 255, 0.1)),
-          rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        font-size: 24px;
-        font-weight: 700;
-      }
-
-      .agent-focus .name {
-        font-size: 22px;
-        font-weight: 700;
-        letter-spacing: -0.03em;
-        overflow-wrap: anywhere;
-      }
-
-      .agent-focus .caption {
-        margin-top: 4px;
-        font-size: 13px;
-        color: var(--muted);
-      }
-
-      .section {
-        padding: 16px 16px 14px;
-      }
-
-      .section-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 12px;
-      }
-
-      .section-title {
-        font-size: 14px;
-        font-weight: 700;
-        color: var(--muted);
-      }
-
-      .section-count {
-        font-size: 12px;
-        font-weight: 700;
-        color: var(--soft);
-      }
-
-      .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-      }
-
-      .agent-card {
-        padding: 13px 13px 12px;
-      }
-
-      .agent-card.active {
-        background: var(--panel-strong);
-        border-color: var(--line-strong);
-        box-shadow: inset 0 0 0 1px rgba(142, 197, 255, 0.12);
-      }
-
-      .agent-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .agent-row .badge {
-        width: 38px;
-        height: 38px;
-        border-radius: 14px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        font-size: 16px;
-        font-weight: 700;
-      }
-
-      .agent-row .name {
+      .hero p.marketing {
+        margin: 16px auto 0;
         font-size: 15px;
-        font-weight: 700;
-        line-height: 1.2;
-        overflow-wrap: anywhere;
-      }
-
-      .agent-row .caption {
-        margin-top: 3px;
-        font-size: 12px;
+        line-height: 1.55;
         color: var(--muted);
-      }
-
-      .empty-state {
-        padding: 18px;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px dashed rgba(255, 255, 255, 0.12);
-        color: var(--muted);
-        font-size: 14px;
-        line-height: 1.45;
+        max-width: 34rem;
       }
 
       .footer-note {
-        margin-top: 12px;
+        margin-top: 4px;
+        text-align: center;
         color: var(--soft);
         font-size: 12px;
         line-height: 1.45;
       }
 
-      /* Striscia LED rossa "alla KITT" (scanner Supercar): sostituisce il blocco
-         agenti, che vive nella chat. Un blob rosso scorre avanti/indietro su una
-         barra scura segmentata, così legge come una fila di LED. */
+      /* Striscia LED "alla KITT" (scanner Supercar): un blob luminoso scorre
+         avanti/indietro su una barra segmentata. Colore = accento Iànua (blu). */
       .kitt {
         position: relative;
         height: 22px;
-        margin: 22px 0 2px;
+        margin: 24px auto 2px;
+        max-width: 320px;
         border-radius: 999px;
-        background: linear-gradient(180deg, rgba(46, 4, 4, 0.7), rgba(12, 2, 2, 0.9));
-        border: 1px solid rgba(255, 64, 64, 0.22);
-        box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.75), 0 0 22px rgba(255, 40, 40, 0.14);
+        background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+        border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+        box-shadow: inset 0 0 14px rgba(11, 18, 32, 0.06), 0 0 22px color-mix(in srgb, var(--accent) 20%, transparent);
         overflow: hidden;
       }
 
@@ -388,8 +243,8 @@
         left: 0;
         width: 42%;
         border-radius: 999px;
-        background: radial-gradient(closest-side, rgba(255, 60, 60, 0.98), rgba(255, 30, 30, 0.42) 58%, rgba(255, 20, 20, 0) 80%);
-        filter: blur(1px) saturate(1.25);
+        background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 98%, transparent), color-mix(in srgb, var(--accent) 42%, transparent) 58%, rgba(255, 255, 255, 0) 80%);
+        filter: blur(1px) saturate(1.15);
         animation: kittScan 1.5s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
       }
 
@@ -397,17 +252,13 @@
         content: "";
         position: absolute;
         inset: 0;
-        background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0) 0 9px, rgba(0, 0, 0, 0.6) 9px 12px);
+        background: repeating-linear-gradient(90deg, rgba(0, 0, 0, 0) 0 9px, rgba(11, 18, 32, 0.12) 9px 12px);
         pointer-events: none;
       }
 
       @keyframes kittScan {
         from { transform: translateX(-45%); }
         to { transform: translateX(180%); }
-      }
-
-      .hero .meta-card {
-        margin-top: 16px;
       }
 
       #openclaw-status {
@@ -426,22 +277,22 @@
         text-align: center;
         padding: 16px 18px;
         border-radius: 14px;
-        background: rgba(18, 18, 22, 0.46);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid var(--line);
+        box-shadow: 0 18px 60px rgba(11, 18, 32, 0.16);
         -webkit-backdrop-filter: blur(14px);
         backdrop-filter: blur(14px);
       }
 
       #openclaw-status .title {
         font: 600 20px -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
-        color: rgba(255, 255, 255, 0.92);
+        color: var(--text);
       }
 
       #openclaw-status .subtitle {
         margin-top: 6px;
         font: 500 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-        color: rgba(255, 255, 255, 0.58);
+        color: var(--muted);
       }
 
       @media (max-width: 640px) {
@@ -452,16 +303,15 @@
 
         .hero {
           border-radius: 24px;
-          padding: 18px 16px 16px;
-        }
-
-        .hero-grid,
-        .agent-grid {
-          grid-template-columns: 1fr;
+          padding: 24px 18px 18px;
         }
 
         .hero h1 {
-          font-size: 34px;
+          font-size: 32px;
+        }
+
+        .brand-logo {
+          height: 88px;
         }
       }
 
@@ -477,55 +327,28 @@
 
         .hero {
           border-radius: 24px;
-          padding: 16px 15px 15px;
+          padding: 20px 16px 16px;
+        }
+
+        .brand-logo {
+          height: 76px;
         }
 
         .hero h1 {
           margin-top: 14px;
-          font-size: clamp(28px, 8vw, 38px);
+          font-size: clamp(26px, 7vw, 34px);
         }
 
-        .hero p {
+        .hero p.subtitle,
+        .hero p.marketing {
           margin-top: 10px;
-          font-size: 15px;
-          line-height: 1.42;
-        }
-
-        .hero-grid {
-          margin-top: 18px;
-        }
-
-        .meta-card {
-          padding: 14px 14px 13px;
-        }
-
-        .meta-value {
-          font-size: 22px;
-        }
-
-        .agent-badge {
-          width: 50px;
-          height: 50px;
-          border-radius: 16px;
-          font-size: 22px;
-        }
-
-        .agent-focus .name {
-          font-size: 20px;
-        }
-
-        .section {
-          padding: 14px 14px 12px;
-        }
-
-        .section-header {
-          margin-bottom: 10px;
+          font-size: 14px;
+          line-height: 1.45;
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
         body::before,
-        body::after,
         .kitt-scan {
           animation: none !important;
         }
@@ -537,36 +360,36 @@
     <div id="openclaw-home">
       <div class="shell">
         <div class="hero">
-          <div class="eyebrow">
-            <span class="eyebrow-dot"></span>
-            <span id="openclaw-home-eyebrow">Welcome to OpenClaw</span>
+          <div class="brand">
+            <img id="openclaw-home-logo" class="brand-logo" src="ianua-logo.png" alt="Ianua" />
+            <div class="eyebrow">
+              <span class="eyebrow-dot"></span>
+              <span id="openclaw-home-eyebrow">Ianua</span>
+            </div>
           </div>
-          <h1 id="openclaw-home-title">Your phone stays quiet until it is needed</h1>
-          <p id="openclaw-home-subtitle">
-            Pair this device to your gateway to wake it only for real work, keep a live agent overview handy, and avoid battery-draining background loops.
+          <h1 id="openclaw-home-title">Ianua è pronta</h1>
+          <p class="subtitle" id="openclaw-home-subtitle">
+            Chat apre i canali Ianua. Telefono apre il client SIP.
+          </p>
+          <p class="marketing" id="openclaw-home-marketing">
+            La tua postazione intelligente: chat, telefono e assistente in un unico posto. Ianua lavora con te.
           </p>
 
           <div class="kitt" aria-hidden="true">
             <span class="kitt-scan"></span>
           </div>
-
-          <div class="meta-card">
-            <div class="meta-label">Gateway</div>
-            <div class="meta-value" id="openclaw-home-gateway">Gateway</div>
-            <div class="meta-subtitle" id="openclaw-home-gateway-caption">Connect to load your agents</div>
-          </div>
         </div>
 
         <div class="footer-note" id="openclaw-home-footer">
-          When connected, the gateway can wake the phone with a silent push instead of holding an always-on session.
+          Quando è connesso, il gateway può svegliare il telefono solo quando serve.
         </div>
       </div>
     </div>
 
     <div id="openclaw-status">
       <div class="card">
-        <div class="title" id="openclaw-status-title">Ready</div>
-        <div class="subtitle" id="openclaw-status-subtitle">Waiting for agent</div>
+        <div class="title" id="openclaw-status-title">Pronta</div>
+        <div class="subtitle" id="openclaw-status-subtitle">In attesa dell'agente</div>
       </div>
     </div>
 
@@ -579,16 +402,11 @@
         const subtitleEl = document.getElementById('openclaw-status-subtitle');
         const home = {
           root: document.getElementById('openclaw-home'),
+          logo: document.getElementById('openclaw-home-logo'),
           eyebrow: document.getElementById('openclaw-home-eyebrow'),
           title: document.getElementById('openclaw-home-title'),
           subtitle: document.getElementById('openclaw-home-subtitle'),
-          gateway: document.getElementById('openclaw-home-gateway'),
-          gatewayCaption: document.getElementById('openclaw-home-gateway-caption'),
-          activeBadge: document.getElementById('openclaw-home-active-badge'),
-          activeName: document.getElementById('openclaw-home-active-name'),
-          activeCaption: document.getElementById('openclaw-home-active-caption'),
-          agentCount: document.getElementById('openclaw-home-agent-count'),
-          agentGrid: document.getElementById('openclaw-home-agent-grid'),
+          marketing: document.getElementById('openclaw-home-marketing'),
           footer: document.getElementById('openclaw-home-footer')
         };
         const debugStatusEnabledByQuery = (() => {
@@ -631,37 +449,18 @@
           if (typeof subtitle === 'string') subtitleEl.textContent = subtitle;
         }
 
-        function clearChildren(node) {
-          while (node.firstChild) node.removeChild(node.firstChild);
-        }
-
-        function createAgentCard(agent) {
-          const card = document.createElement('div');
-          card.className = `agent-card${agent.isActive ? ' active' : ''}`;
-
-          const row = document.createElement('div');
-          row.className = 'agent-row';
-
-          const badge = document.createElement('div');
-          badge.className = 'badge';
-          badge.textContent = agent.badge || 'OC';
-
-          const text = document.createElement('div');
-
-          const name = document.createElement('div');
-          name.className = 'name';
-          name.textContent = agent.name || agent.id || 'Agent';
-
-          const caption = document.createElement('div');
-          caption.className = 'caption';
-          caption.textContent = agent.caption || 'Ready';
-
-          text.appendChild(name);
-          text.appendChild(caption);
-          row.appendChild(badge);
-          row.appendChild(text);
-          card.appendChild(row);
-          return card;
+        // Tema per-tenant: colori/logo/testi arrivano dal JSON del server.
+        // Se un campo manca, resta il default del brand Iànua già nell'HTML.
+        function applyTheme(theme) {
+          if (!theme || typeof theme !== 'object') return;
+          const root = document.documentElement.style;
+          if (theme.background) root.setProperty('--bg', theme.background);
+          if (theme.accent) root.setProperty('--accent', theme.accent);
+          if (theme.accentStrong) root.setProperty('--accent-strong', theme.accentStrong);
+          if (theme.text) root.setProperty('--text', theme.text);
+          if (theme.muted) root.setProperty('--muted', theme.muted);
+          if (home.logo && typeof theme.logo === 'string' && theme.logo) home.logo.src = theme.logo;
+          if (home.marketing && typeof theme.marketing === 'string') home.marketing.textContent = theme.marketing;
         }
 
         function renderHome(state) {
@@ -669,38 +468,12 @@
 
           document.body.dataset.state = state.gatewayState || 'offline';
           home.root.style.display = 'flex';
-          const setText = (el, val) => { if (el) el.textContent = val; };
-          setText(home.eyebrow, state.eyebrow || 'Welcome to OpenClaw');
-          setText(home.title, state.title || 'OpenClaw');
+          applyTheme(state.theme);
+          const setText = (el, val) => { if (el && typeof val === 'string') el.textContent = val; };
+          setText(home.eyebrow, state.eyebrow || 'Ianua');
+          setText(home.title, state.title || 'Ianua');
           setText(home.subtitle, state.subtitle || '');
-          setText(home.gateway, state.gatewayLabel || 'Gateway');
-          setText(home.gatewayCaption, state.gatewayState === 'connected'
-            ? `${state.agentCount || 0} agent${state.agentCount === 1 ? '' : 's'} available`
-            : (state.activeAgentCaption || 'Connect to load your agents'));
-          setText(home.activeBadge, state.activeAgentBadge || 'OC');
-          setText(home.activeName, state.activeAgentName || 'Main');
-          setText(home.activeCaption, state.activeAgentCaption || '');
-          setText(home.agentCount, `${state.agentCount || 0} agent${state.agentCount === 1 ? '' : 's'}`);
           setText(home.footer, state.footer || '');
-
-          // La griglia agenti è stata sostituita dalla striscia LED: se non c'è più
-          // nel DOM saltiamo il render senza rompere il resto della home.
-          if (!home.agentGrid) return;
-          clearChildren(home.agentGrid);
-          const agents = Array.isArray(state.agents) ? state.agents : [];
-          if (!agents.length) {
-            const empty = document.createElement('div');
-            empty.className = 'empty-state';
-            empty.textContent = state.gatewayState === 'connected'
-              ? 'Your gateway is online. Agents will appear here as soon as the current scope reports them.'
-              : 'Connect this phone to your gateway and the live agent overview will appear here.';
-            home.agentGrid.appendChild(empty);
-            return;
-          }
-
-          agents.forEach((agent) => {
-            home.agentGrid.appendChild(createAgentCard(agent));
-          });
         }
 
         window.addEventListener('resize', resize);

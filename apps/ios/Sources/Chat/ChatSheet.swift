@@ -27,6 +27,13 @@ struct ChatSheet: View {
                 .navigationTitle(self.chatTitle)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Image("IanuaMark")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 22)
+                            .accessibilityLabel("Ianua")
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             self.dismiss()

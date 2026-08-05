@@ -45,7 +45,7 @@ struct SpockTalkView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Spock")
+                Text("Ianua")
                     .font(.title3.weight(.semibold))
                 Text(self.statusText)
                     .font(.footnote)
@@ -55,7 +55,7 @@ struct SpockTalkView: View {
             if !self.manager.lines.isEmpty {
                 Button {
                     UIPasteboard.general.string = self.manager.lines
-                        .map { "\($0.role == .user ? "Io" : "Spock"): \($0.text)" }
+                        .map { "\($0.role == .user ? "Io" : "Ianua"): \($0.text)" }
                         .joined(separator: "\n")
                     withAnimation { self.copiedAll = true }
                     Task {
@@ -216,7 +216,7 @@ struct SpockTalkView: View {
         .opacity(self.manager.isActive ? 1 : 0.35)
         .animation(.easeOut(duration: 0.15), value: self.manager.isMuted)
         .accessibilityLabel(self.manager.isMuted ? "Riattiva microfono" : "Muta microfono")
-        .accessibilityHint("Spock continua a parlare ma non ti sente")
+        .accessibilityHint("Ianua continua a parlare ma non ti sente")
     }
 
     private var footer: some View {
@@ -229,12 +229,12 @@ struct SpockTalkView: View {
     private var statusText: String {
         if case .error = self.manager.phase { return "Errore" }
         if self.manager.holdMusicActive { return "Musica d'attesa — microfono in muto" }
-        if self.manager.isMuted { return "Microfono in muto — Spock parla ma non ti sente" }
+        if self.manager.isMuted { return "Microfono in muto — Ianua parla ma non ti sente" }
         switch self.manager.phase {
         case .idle: return "Conversazione ferma"
         case .connecting: return "Connessione…"
         case .listening: return "Ti ascolto"
-        case .speaking: return "Spock sta parlando"
+        case .speaking: return "Ianua sta parlando"
         case .error: return "Errore"
         }
     }

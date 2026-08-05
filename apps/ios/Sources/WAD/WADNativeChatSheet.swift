@@ -151,9 +151,11 @@ private struct WADLoginView: View {
         NavigationStack {
             VStack(spacing: 20) {
                 Spacer()
-                Image(systemName: "text.bubble.fill")
-                    .font(.system(size: 44, weight: .bold))
-                    .foregroundStyle(.tint)
+                Image("IanuaMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 64)
+                    .accessibilityLabel("Ianua")
                 Text("WAD Chat")
                     .font(.system(.largeTitle, design: .rounded).weight(.bold))
                 Text("Canali nativi sincronizzati con WAD web")
@@ -266,6 +268,18 @@ private struct WADChannelListView: View {
                 }
             }
             .navigationTitle("Chat")
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        Image("IanuaMark")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 20)
+                        Text("Chat").font(.headline)
+                    }
+                    .accessibilityLabel("Chat Ianua")
+                }
+            }
             .navigationDestination(for: WADChatChannel.self) { channel in
                 WADChatThreadView(channel: channel)
                     .environmentObject(self.state)

@@ -1275,7 +1275,7 @@ final class NodeAppModel {
         if finalStatus == .authorized || finalStatus == .provisional || finalStatus == .ephemeral {
             let addResult = await self.runNotificationCall(timeoutSeconds: 2.0) { [notificationCenter] in
                 let content = UNMutableNotificationContent()
-                content.title = "OpenClaw"
+                content.title = "Ianua"
                 content.body = text
                 content.sound = .default
                 content.userInfo = ["messageId": messageId]

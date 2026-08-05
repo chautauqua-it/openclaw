@@ -37,7 +37,7 @@ struct OpenClawLiveActivity: Widget {
             self.statusDot(state: context.state)
                 .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
-                Text("OpenClaw")
+                Text("Ianua")
                     .font(.subheadline.bold())
                 Text(context.state.statusText)
                     .font(.caption)
