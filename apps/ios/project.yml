@@ -126,7 +126,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: WAD
+        CFBundleDisplayName: Ianua
         CFBundleIconName: AppIcon
         CFBundleURLTypes:
           - CFBundleURLName: ai.openclaw.ios
@@ -207,7 +207,7 @@ targets:
     info:
       path: ShareExtension/Info.plist
       properties:
-        CFBundleDisplayName: WAD Share
+        CFBundleDisplayName: Ianua Share
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         NSExtension:
@@ -244,7 +244,7 @@ targets:
     info:
       path: ActivityWidget/Info.plist
       properties:
-        CFBundleDisplayName: WAD Activity
+        CFBundleDisplayName: Ianua Activity
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         NSSupportsLiveActivities: true
@@ -274,7 +274,7 @@ targets:
     info:
       path: IntentsExtension/Info.plist
       properties:
-        CFBundleDisplayName: WAD Intents
+        CFBundleDisplayName: Ianua Intents
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         NSExtension:
@@ -312,7 +312,7 @@ targets:
     info:
       path: WatchApp/Info.plist
       properties:
-        CFBundleDisplayName: WAD
+        CFBundleDisplayName: Ianua
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         WKCompanionAppBundleIdentifier: "$(OPENCLAW_APP_BUNDLE_ID)"
@@ -348,7 +348,7 @@ targets:
     info:
       path: WatchControlWidget/Info.plist
       properties:
-        CFBundleDisplayName: WAD Control
+        CFBundleDisplayName: Ianua Control
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         NSExtension:
@@ -384,7 +384,7 @@ targets:
     info:
       path: WatchExtension/Info.plist
       properties:
-        CFBundleDisplayName: WAD
+        CFBundleDisplayName: Ianua
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
         NSMicrophoneUsageDescription: WAD usa il microfono per parlare in viva voce con gli agenti dal polso.

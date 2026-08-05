@@ -317,10 +317,10 @@ struct RootCanvas: View {
         case .connected:
             return HomeCanvasPayload(
                 gatewayState: "connected",
-                eyebrow: "Connesso a \(gatewayLabel)",
-                title: "WAD è pronto",
+                eyebrow: "Connesso",
+                title: "Ianua è pronta",
                 subtitle:
-                "Chat apre i canali WAD. Agenti apre la conversazione diretta con l'agente selezionato.",
+                "Chat apre i canali Ianua. Telefono apre il client SIP.",
                 gatewayLabel: gatewayLabel,
                 activeAgentName: self.appModel.activeAgentName,
                 activeAgentBadge: agents.first(where: { $0.isActive })?.badge ?? "OC",
@@ -332,7 +332,7 @@ struct RootCanvas: View {
             return HomeCanvasPayload(
                 gatewayState: "connecting",
                 eyebrow: "Riconnessione",
-                title: "WAD si sta riallineando",
+                title: "Ianua si sta riallineando",
                 subtitle:
                 "La sessione gateway sta tornando online. "
                     + "Le scorciatoie degli agenti si sistemano automaticamente tra poco.",
@@ -346,10 +346,10 @@ struct RootCanvas: View {
         case .error, .disconnected:
             return HomeCanvasPayload(
                 gatewayState: self.gatewayStatus == .error ? "error" : "offline",
-                eyebrow: "WAD",
+                eyebrow: "Ianua",
                 title: "Il telefono resta pronto quando serve",
                 subtitle:
-                "Abbina questo iPhone al gateway per usare canali, agenti e strumenti dal telefono.",
+                "Abbina questo iPhone al gateway per usare i canali Ianua e il client SIP dal telefono.",
                 gatewayLabel: gatewayLabel,
                 activeAgentName: "Main",
                 activeAgentBadge: "OC",

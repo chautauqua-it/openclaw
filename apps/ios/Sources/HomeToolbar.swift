@@ -47,7 +47,7 @@ struct HomeToolbar: View {
 
                     HomeToolbarActionButton(
                         systemImage: "mic.fill",
-                        accessibilityLabel: "Parla con Spock",
+                        accessibilityLabel: "Parla con Ianua",
                         brighten: self.brighten,
                         tint: self.talkTint,
                         isActive: self.talkActive,

@@ -15,10 +15,10 @@ struct WatchTalkControlWidget: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "it.differen.wad.watch.talk") {
             ControlWidgetButton(action: StartWatchTalkIntent()) {
-                Label("Parla con WAD", systemImage: "mic.fill")
+                Label("Parla con Ianua", systemImage: "mic.fill")
             }
         }
-        .displayName("Parla con WAD")
-        .description("Apri il microfono WAD sul polso.")
+        .displayName("Parla con Ianua")
+        .description("Apri il microfono Ianua sul polso.")
     }
 }

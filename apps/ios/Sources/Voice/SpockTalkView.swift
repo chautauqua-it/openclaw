@@ -199,7 +199,7 @@ struct SpockTalkView: View {
                         LinearGradient(
                             colors: self.manager.isMuted
                                 ? [Color(red: 0.55, green: 0.55, blue: 0.55), Color(red: 0.38, green: 0.38, blue: 0.38)]
-                                : [Color(red: 1.0, green: 0.72, blue: 0.25), Color(red: 0.95, green: 0.55, blue: 0.15)],
+                                : [Color(red: 0.20, green: 0.55, blue: 1.0), Color(red: 0.10, green: 0.40, blue: 0.90)],
                             startPoint: .top,
                             endPoint: .bottom))
                     .overlay {
@@ -207,7 +207,7 @@ struct SpockTalkView: View {
                             .strokeBorder(.black.opacity(0.5), lineWidth: 1.5)
                     }
                     .shadow(
-                        color: self.manager.isMuted ? .clear : Color(red: 1.0, green: 0.6, blue: 0.2).opacity(0.45),
+                        color: self.manager.isMuted ? .clear : Color(red: 0.13, green: 0.47, blue: 0.97).opacity(0.45),
                         radius: 12)
             }
         }
@@ -299,7 +299,7 @@ struct KittVoiceMeter: View {
                 RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                     .fill(self.segmentColor(lit: lit))
                     .frame(width: Self.segmentSize.width, height: Self.segmentSize.height)
-                    .shadow(color: lit ? Color.red.opacity(0.55) : .clear, radius: 6)
+                    .shadow(color: lit ? Color(red: 0.13, green: 0.47, blue: 0.97).opacity(0.55) : .clear, radius: 6)
             }
         }
     }
@@ -309,7 +309,7 @@ struct KittVoiceMeter: View {
             return Color(white: 0.22)
         }
         return lit
-            ? Color(red: 0.94, green: 0.13, blue: 0.08)
-            : Color(red: 0.30, green: 0.04, blue: 0.03)
+            ? Color(red: 0.13, green: 0.47, blue: 0.97)
+            : Color(red: 0.04, green: 0.13, blue: 0.30)
     }
 }
