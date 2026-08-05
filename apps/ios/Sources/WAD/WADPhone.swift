@@ -338,6 +338,9 @@ final class WADSipManager: ObservableObject {
                 self.audioSessionForced = false
                 self.audioSessionActive = false
             }
+            // Se il muto era stato inserito (anche prima della risposta), lo azzero
+            // sul core così la prossima chiamata non parte silenziata.
+            self.core?.micEnabled = true
             self.currentCall = nil
             self.qCallState = .idle
             Task { @MainActor in
@@ -349,6 +352,7 @@ final class WADSipManager: ObservableObject {
                 self.callCenter?.sipCallEnded()
             }
         case .Error:
+            self.core?.micEnabled = true
             self.currentCall = nil
             self.qCallState = .idle
             WADDeviceLog.shared.log("sip.error", "chiamata fallita: \(message)")
@@ -439,7 +443,10 @@ final class WADSipManager: ObservableObject {
 
     func toggleMute() {
         self.sipQueue.async {
-            guard let core = self.core, self.qCallState == .inCall else { return }
+            // Il muto è disponibile già mentre squilla in uscita: core.micEnabled
+            // è un flag di core che viene applicato quando parte il media.
+            guard let core = self.core,
+                  self.qCallState == .inCall || self.qCallState == .ringingOut else { return }
             core.micEnabled = !core.micEnabled
             let muted = !core.micEnabled
             Task { @MainActor in self.muted = muted }
@@ -942,7 +949,9 @@ struct WADPhoneSheet: View {
             }
             .onReceive(self.timer) { date in
                 self.now = date
-                if self.phone.callState == .inCall { self.phone.refreshAudioOutputs() }
+                if self.phone.callState == .inCall || self.phone.callState == .ringingOut {
+                    self.phone.refreshAudioOutputs()
+                }
             }
             .onChange(of: self.phone.callState) { _, state in
                 if state != .inCall {
@@ -1087,6 +1096,9 @@ struct WADPhoneSheet: View {
                     self.inCallControls
                 }
             }
+            if self.phone.callState == .ringingOut {
+                self.earlyCallControls
+            }
             if self.phone.callState == .ringingOut
                 || (self.phone.callState == .inCall
                     && !self.transferMode && !self.confMode
@@ -1098,6 +1110,20 @@ struct WADPhoneSheet: View {
             }
         }
         .padding(.top, 20)
+    }
+
+    /// Controlli disponibili già mentre squilla in uscita: muto e vivavoce.
+    /// Trasferimento e conferenza restano riservati alla chiamata attiva.
+    private var earlyCallControls: some View {
+        HStack(spacing: 14) {
+            self.controlCircle(
+                icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
+                label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
+                active: self.phone.muted
+            ) { self.phone.toggleMute() }
+            self.audioCircle
+        }
+        .padding(.top, 8)
     }
 
     /// Fila di controlli in chiamata, sole icone: muta, tastierino DTMF,
