@@ -4,6 +4,9 @@
 
 Maintenance update for the current OpenClaw development release.
 
+- Rebranded the mobile app experience as Ianua, including app and extension display names, Ianua app icons, and the phone screen mark.
+- Added presence status in the native Linphone phonebook: registered and free, not registered, busy, and DND.
+
 ## 2026.4.26 - 2026-04-26
 
 Maintenance update for the current OpenClaw development release.
