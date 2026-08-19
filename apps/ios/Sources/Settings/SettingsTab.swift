@@ -264,6 +264,17 @@ struct SettingsTab: View {
                     }
                 }
 
+                Section("Sicurezza") {
+                    NavigationLink {
+                        AuthenticatorView()
+                    } label: {
+                        Label("Authenticator", systemImage: "key.viewfinder")
+                    }
+                    Text("Genera codici TOTP localmente. I secret restano nel Keychain del dispositivo.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Device") {
                     DisclosureGroup("Features") {
                         self.featureToggle(
