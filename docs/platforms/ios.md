@@ -265,6 +265,24 @@ openclaw nodes invoke --node "iOS Node" --command canvas.snapshot --params '{"ma
 - Voice wake and talk mode are available in Settings.
 - iOS may suspend background audio; treat voice features as best-effort when the app is not active.
 
+## Authenticator approvals (staging)
+
+The iPhone app can render an Authenticator challenge inside the existing exec
+approval flow. Authenticator mode is approve-or-deny only: it never initiates an
+action and never offers `allow-always`.
+
+- Confirm that target, action, parameter summary, tenant, environment, audience,
+  initiating device, and request hash match the action shown on the initiating
+  workstation.
+- Enter the numeric code displayed on that workstation.
+- Approval requires local biometrics and a P-256 signature from the device's
+  Authenticator key. The expected number-matching code is never included in the
+  iOS or push payload.
+- Challenges expire and are single-use. The same identity cannot both initiate
+  and approve an action. Authenticator prompts are not forwarded to Apple Watch.
+- This path is staging-only. Enrollment and native hardware-attestation gates
+  must be complete before production critical-action enforcement is enabled.
+
 ## Common errors
 
 - `NODE_BACKGROUND_UNAVAILABLE`: bring the iOS app to the foreground (canvas/camera/screen commands require it).

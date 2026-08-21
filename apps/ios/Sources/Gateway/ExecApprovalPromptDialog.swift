@@ -12,32 +12,57 @@ private struct ExecApprovalPromptDialogModifier: ViewModifier {
                         Color.black.opacity(0.38)
                             .ignoresSafeArea()
 
-                        ExecApprovalPromptCard(
-                            prompt: prompt,
-                            isResolving: self.appModel.pendingExecApprovalPromptResolving,
-                            errorText: self.appModel.pendingExecApprovalPromptErrorText,
-                            brighten: self.colorScheme == .light,
-                            onAllowOnce: {
-                                Task {
-                                    await self.appModel.resolvePendingExecApprovalPrompt(decision: "allow-once")
-                                }
-                            },
-                            onAllowAlways: {
-                                Task {
-                                    await self.appModel.resolvePendingExecApprovalPrompt(decision: "allow-always")
-                                }
-                            },
-                            onDeny: {
-                                Task {
-                                    await self.appModel.resolvePendingExecApprovalPrompt(decision: "deny")
-                                }
-                            },
-                            onCancel: {
-                                self.appModel.dismissPendingExecApprovalPrompt()
-                            })
-                            .padding(.horizontal, 20)
-                            .frame(maxWidth: 460)
-                            .transition(.scale(scale: 0.98).combined(with: .opacity))
+                        Group {
+                            if let challenge = prompt.authenticator {
+                                AuthenticatorApprovalView(
+                                    challenge: challenge,
+                                    isResolving: self.appModel.pendingExecApprovalPromptResolving,
+                                    errorText: self.appModel.pendingExecApprovalPromptErrorText,
+                                    onApprove: { code in
+                                        Task {
+                                            await self.appModel.resolvePendingAuthenticatorPrompt(
+                                                decision: "approve",
+                                                enteredCode: code)
+                                        }
+                                    },
+                                    onDeny: { code in
+                                        Task {
+                                            await self.appModel.resolvePendingAuthenticatorPrompt(
+                                                decision: "deny",
+                                                enteredCode: code)
+                                        }
+                                    },
+                                    onCancel: { self.appModel.dismissPendingExecApprovalPrompt() })
+                            } else {
+                                ExecApprovalPromptCard(
+                                    prompt: prompt,
+                                    isResolving: self.appModel.pendingExecApprovalPromptResolving,
+                                    errorText: self.appModel.pendingExecApprovalPromptErrorText,
+                                    brighten: self.colorScheme == .light,
+                                    onAllowOnce: {
+                                        Task {
+                                            await self.appModel.resolvePendingExecApprovalPrompt(decision: "allow-once")
+                                        }
+                                    },
+                                    onAllowAlways: {
+                                        Task {
+                                            await self.appModel
+                                                .resolvePendingExecApprovalPrompt(decision: "allow-always")
+                                        }
+                                    },
+                                    onDeny: {
+                                        Task {
+                                            await self.appModel.resolvePendingExecApprovalPrompt(decision: "deny")
+                                        }
+                                    },
+                                    onCancel: {
+                                        self.appModel.dismissPendingExecApprovalPrompt()
+                                    })
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .frame(maxWidth: 460)
+                        .transition(.scale(scale: 0.98).combined(with: .opacity))
                     }
                     .zIndex(1)
                 }

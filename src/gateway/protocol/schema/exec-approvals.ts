@@ -142,6 +142,30 @@ export const ExecApprovalRequestParamsSchema = Type.Object(
     turnSourceThreadId: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Null()])),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
     twoPhase: Type.Optional(Type.Boolean()),
+    authenticator: Type.Optional(
+      Type.Object(
+        {
+          personId: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          initiatorDeviceId: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          nonce: Type.String({ minLength: 44, maxLength: 44 }),
+          action: Type.Object(
+            {
+              environment: NonEmptyString,
+              tenant: NonEmptyString,
+              audience: NonEmptyString,
+              actionId: NonEmptyString,
+              requestHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+            },
+            { additionalProperties: false },
+          ),
+          target: Type.String({ minLength: 1, maxLength: 512 }),
+          parameterSummary: Type.String({ maxLength: 2048 }),
+          matchCodeDigits: Type.Integer({ minimum: 2, maximum: 8 }),
+          matchCodeHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -150,6 +174,17 @@ export const ExecApprovalResolveParamsSchema = Type.Object(
   {
     id: NonEmptyString,
     decision: NonEmptyString,
+    authenticator: Type.Optional(
+      Type.Object(
+        {
+          personId: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          enteredCode: Type.String({ pattern: "^[0-9]{2,8}$" }),
+          signatureDer: Type.String({ minLength: 8, maxLength: 256 }),
+          publicKeyDer: Type.String({ minLength: 8, maxLength: 512 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );

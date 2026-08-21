@@ -129,6 +129,10 @@ export type ExecApprovalRequestPayload = {
   turnSourceTo?: string | null;
   turnSourceAccountId?: string | null;
   turnSourceThreadId?: string | number | null;
+  authenticator?: Omit<
+    import("../gateway/exec-approval-authenticator.js").ExecApprovalAuthenticatorRequest,
+    "matchCodeHash"
+  >;
 };
 
 export type ExecApprovalRequest = {

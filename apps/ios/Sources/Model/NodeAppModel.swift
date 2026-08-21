@@ -74,9 +74,10 @@ final class NodeAppModel {
         let nodeId: String?
         let agentId: String?
         let expiresAtMs: Int?
+        let authenticator: AuthenticatorChallenge?
 
         var allowsAllowAlways: Bool {
-            self.allowedDecisions.contains("allow-always")
+            self.authenticator == nil && self.allowedDecisions.contains("allow-always")
         }
     }
 
@@ -3472,6 +3473,7 @@ extension NodeAppModel {
     private struct ExecApprovalResolveRequest: Encodable {
         let id: String
         let decision: String
+        let authenticator: AuthenticatorResolutionPayload?
     }
 
     private struct ExecApprovalGetResponse: Decodable {
@@ -3483,6 +3485,7 @@ extension NodeAppModel {
         var nodeId: String?
         var agentId: String?
         var expiresAtMs: Int?
+        var authenticator: AuthenticatorChallenge?
     }
 
     func presentExecApprovalNotificationPrompt(_ prompt: ExecApprovalNotificationPrompt) async {
@@ -3525,6 +3528,9 @@ extension NodeAppModel {
         self.pendingExecApprovalPrompt = prompt
         self.pendingExecApprovalPromptResolving = false
         self.pendingExecApprovalPromptErrorText = nil
+        // Authenticator challenges are iPhone-only: the watch bridge cannot
+        // perform LocalAuthentication or produce the bound person signature.
+        guard prompt.authenticator == nil else { return }
         self.upsertWatchExecApprovalPrompt(prompt)
         Task { @MainActor [weak self] in
             await self?.publishWatchExecApprovalPrompt(prompt, reason: "present_prompt")
@@ -3546,7 +3552,8 @@ extension NodeAppModel {
             host: details.host?.trimmingCharacters(in: .whitespacesAndNewlines),
             nodeId: details.nodeId?.trimmingCharacters(in: .whitespacesAndNewlines),
             agentId: details.agentId?.trimmingCharacters(in: .whitespacesAndNewlines),
-            expiresAtMs: details.expiresAtMs)
+            expiresAtMs: details.expiresAtMs,
+            authenticator: details.authenticator)
     }
 
     private nonisolated static func shouldUseBackgroundAwareExecApprovalReconnect(
@@ -3648,6 +3655,38 @@ extension NodeAppModel {
         }
     }
 
+    func resolvePendingAuthenticatorPrompt(decision: String, enteredCode: String) async {
+        guard let prompt = self.pendingExecApprovalPrompt,
+              let challenge = prompt.authenticator,
+              challenge.validationError() == nil
+        else {
+            self.pendingExecApprovalPromptErrorText = "Richiesta Authenticator non valida o scaduta."
+            return
+        }
+        guard decision == "approve" || decision == "deny" else { return }
+
+        self.pendingExecApprovalPromptResolving = true
+        self.pendingExecApprovalPromptErrorText = nil
+        do {
+            let payload = try await AuthenticatorStore.shared.makeResolution(
+                challenge: challenge,
+                enteredCode: enteredCode,
+                decision: decision,
+                authenticate: decision == "approve")
+            let outcome = await self.resolveExecApprovalNotificationDecision(
+                approvalId: prompt.id,
+                decision: decision,
+                authenticator: payload)
+            if case let .failed(message) = outcome {
+                self.pendingExecApprovalPromptResolving = false
+                self.pendingExecApprovalPromptErrorText = message
+            }
+        } catch {
+            self.pendingExecApprovalPromptResolving = false
+            self.pendingExecApprovalPromptErrorText = error.localizedDescription
+        }
+    }
+
     func handleExecApprovalNotificationDecision(
         approvalId: String,
         decision: String) async
@@ -3677,7 +3716,8 @@ extension NodeAppModel {
     private func resolveExecApprovalNotificationDecision(
         approvalId: String,
         decision: String,
-        sourceReason: String? = nil) async -> ExecApprovalResolutionOutcome
+        sourceReason: String? = nil,
+        authenticator: AuthenticatorResolutionPayload? = nil) async -> ExecApprovalResolutionOutcome
     {
         let normalizedApprovalID = approvalId.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3705,7 +3745,10 @@ extension NodeAppModel {
 
         do {
             let payloadJSON = try Self.encodePayload(
-                ExecApprovalResolveRequest(id: normalizedApprovalID, decision: normalizedDecision))
+                ExecApprovalResolveRequest(
+                    id: normalizedApprovalID,
+                    decision: normalizedDecision,
+                    authenticator: authenticator))
             _ = try await self.operatorGateway.request(
                 method: "exec.approval.resolve",
                 paramsJSON: payloadJSON,
@@ -4488,7 +4531,8 @@ extension NodeAppModel {
                 host: host,
                 nodeId: nodeId,
                 agentId: agentId,
-                expiresAtMs: expiresAtMs))
+                expiresAtMs: expiresAtMs,
+                authenticator: nil))
     }
 
     static func _test_currentDeepLinkKey() -> String {

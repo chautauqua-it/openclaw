@@ -18,6 +18,12 @@ import {
 } from "../../infra/system-run-approval-binding.js";
 import { resolveSystemRunApprovalRequestContext } from "../../infra/system-run-approval-context.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import {
+  publicAuthenticatorRequest,
+  verifyExecApprovalAuthenticatorProof,
+  type ExecApprovalAuthenticatorProof,
+  type ExecApprovalAuthenticatorRequest,
+} from "../exec-approval-authenticator.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
 import {
   ErrorCodes,
@@ -52,6 +58,10 @@ export function createExecApprovalHandlers(
   manager: ExecApprovalManager,
   opts?: { forwarder?: ExecApprovalForwarder; iosPushDelivery?: ExecApprovalIosPushDelivery },
 ): GatewayRequestHandlers {
+  // Number-matching verifiers are deliberately kept out of request records,
+  // broadcasts, list/get responses and push payloads. A short-code hash is
+  // brute-forceable and therefore must be treated like the code itself.
+  const authenticatorCodeHashes = new Map<string, string>();
   return {
     "exec.approval.get": async ({ params, respond }) => {
       if (!validateExecApprovalGetParams(params)) {
@@ -91,6 +101,12 @@ export function createExecApprovalHandlers(
           nodeId: resolved.snapshot.request.nodeId ?? null,
           agentId: resolved.snapshot.request.agentId ?? null,
           expiresAtMs: resolved.snapshot.expiresAtMs,
+          authenticator: resolved.snapshot.request.authenticator
+            ? {
+                ...resolved.snapshot.request.authenticator,
+                expiresAtUnix: Math.floor(resolved.snapshot.expiresAtMs / 1000),
+              }
+            : null,
         },
         undefined,
       );
@@ -142,6 +158,7 @@ export function createExecApprovalHandlers(
         turnSourceThreadId?: string | number;
         timeoutMs?: number;
         twoPhase?: boolean;
+        authenticator?: ExecApprovalAuthenticatorRequest;
       };
       const twoPhase = p.twoPhase === true;
       const timeoutMs =
@@ -225,6 +242,17 @@ export function createExecApprovalHandlers(
         );
         return;
       }
+      if (p.authenticator && p.authenticator.personId === p.authenticator.initiatorDeviceId) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            "authenticator approver may not be the initiating device",
+          ),
+        );
+        return;
+      }
       const request = {
         command: sanitizeExecApprovalDisplayText(effectiveCommandText),
         commandPreview:
@@ -241,7 +269,9 @@ export function createExecApprovalHandlers(
         security: p.security ?? null,
         ask: p.ask ?? null,
         warningText: warningText ? sanitizeExecApprovalWarningText(warningText) : null,
-        allowedDecisions: resolveExecApprovalAllowedDecisions({ ask: p.ask ?? null }),
+        allowedDecisions: p.authenticator
+          ? (["allow-once", "deny"] as const)
+          : resolveExecApprovalAllowedDecisions({ ask: p.ask ?? null }),
         agentId: effectiveAgentId ?? null,
         resolvedPath: p.resolvedPath ?? null,
         sessionKey: effectiveSessionKey ?? null,
@@ -249,8 +279,12 @@ export function createExecApprovalHandlers(
         turnSourceTo: normalizeOptionalString(p.turnSourceTo) ?? null,
         turnSourceAccountId: normalizeOptionalString(p.turnSourceAccountId) ?? null,
         turnSourceThreadId: p.turnSourceThreadId ?? null,
+        authenticator: p.authenticator ? publicAuthenticatorRequest(p.authenticator) : undefined,
       };
       const record = manager.create(request, timeoutMs, explicitId);
+      if (p.authenticator) {
+        authenticatorCodeHashes.set(record.id, p.authenticator.matchCodeHash);
+      }
       record.requestedByConnId = client?.connId ?? null;
       record.requestedByDeviceId = client?.connect?.device?.id ?? null;
       record.requestedByClientId = client?.connect?.client?.id ?? null;
@@ -319,6 +353,7 @@ export function createExecApprovalHandlers(
           })();
         },
         afterDecision: async (decision) => {
+          authenticatorCodeHashes.delete(record.id);
           if (decision === null) {
             await opts?.iosPushDelivery?.handleExpired?.(requestEvent);
           }
@@ -347,12 +382,77 @@ export function createExecApprovalHandlers(
         );
         return;
       }
-      const p = params as { id: string; decision: string };
-      if (!isApprovalDecision(p.decision)) {
+      const p = params as {
+        id: string;
+        decision: string;
+        authenticator?: ExecApprovalAuthenticatorProof;
+      };
+      const pendingLookup = resolvePendingApprovalRecord({
+        manager,
+        inputId: p.id,
+        exposeAmbiguousPrefixError: true,
+      });
+      const authenticatorRequest = pendingLookup.ok
+        ? pendingLookup.snapshot.request.authenticator
+        : undefined;
+      let decision: ExecApprovalDecision;
+      if (authenticatorRequest) {
+        if (!pendingLookup.ok) {
+          respondPendingApprovalLookupError({ respond, response: pendingLookup.response });
+          return;
+        }
+        if ((p.decision !== "approve" && p.decision !== "deny") || !p.authenticator) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, "authenticator proof is required"),
+          );
+          return;
+        }
+        const matchCodeHash = authenticatorCodeHashes.get(pendingLookup.approvalId);
+        if (!matchCodeHash) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, "authenticator verifier is unavailable"),
+          );
+          return;
+        }
+        const verdict = verifyExecApprovalAuthenticatorProof({
+          request: { ...authenticatorRequest, matchCodeHash },
+          proof: p.authenticator,
+          decision: p.decision,
+        });
+        if (!verdict.ok) {
+          respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, verdict.reason));
+          return;
+        }
+        decision = p.decision === "approve" ? "allow-once" : "deny";
+      } else if (p.authenticator || p.decision === "approve") {
+        if (!pendingLookup.ok) {
+          respondPendingApprovalLookupError({ respond, response: pendingLookup.response });
+          return;
+        }
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "unexpected authenticator proof"),
+        );
+        return;
+      } else if (isApprovalDecision(p.decision)) {
+        if (p.authenticator) {
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.INVALID_REQUEST, "unexpected authenticator proof"),
+          );
+          return;
+        }
+        decision = p.decision;
+      } else {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid decision"));
         return;
       }
-      const decision: ExecApprovalDecision = p.decision;
       await handleApprovalResolve({
         manager,
         inputId: p.id,
