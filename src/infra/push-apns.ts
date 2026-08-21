@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, sign as signJwt } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign as signJwt } from "node:crypto";
 import fs from "node:fs/promises";
 import http2 from "node:http2";
 import path from "node:path";
@@ -22,6 +22,11 @@ import {
 export type ApnsEnvironment = "sandbox" | "production";
 export type ApnsTransport = "direct" | "relay";
 
+export type AuthenticatorIdentity = {
+  personId: string;
+  publicKeyDer: string;
+};
+
 export type DirectApnsRegistration = {
   nodeId: string;
   transport: "direct";
@@ -29,6 +34,7 @@ export type DirectApnsRegistration = {
   topic: string;
   environment: ApnsEnvironment;
   updatedAtMs: number;
+  authenticator?: AuthenticatorIdentity;
 };
 
 export type RelayApnsRegistration = {
@@ -42,6 +48,7 @@ export type RelayApnsRegistration = {
   distribution: "official";
   updatedAtMs: number;
   tokenDebugSuffix?: string;
+  authenticator?: AuthenticatorIdentity;
 };
 
 export type ApnsRegistration = DirectApnsRegistration | RelayApnsRegistration;
@@ -101,6 +108,7 @@ type RegisterDirectApnsParams = {
   topic: string;
   environment?: unknown;
   baseDir?: string;
+  authenticator?: unknown;
 };
 
 type RegisterRelayApnsParams = {
@@ -114,6 +122,7 @@ type RegisterRelayApnsParams = {
   distribution?: unknown;
   tokenDebugSuffix?: unknown;
   baseDir?: string;
+  authenticator?: unknown;
 };
 
 type RegisterApnsParams = RegisterDirectApnsParams | RegisterRelayApnsParams;
@@ -186,6 +195,34 @@ function normalizeTokenDebugSuffix(value: unknown): string | undefined {
   }
   const normalized = normalizeLowercaseStringOrEmpty(value.trim()).replace(/[^0-9a-z]/g, "");
   return normalized.length > 0 ? normalized.slice(-8) : undefined;
+}
+
+function normalizeAuthenticatorIdentity(value: unknown): AuthenticatorIdentity | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.personId !== "string" || typeof candidate.publicKeyDer !== "string") {
+    throw new Error("invalid authenticator identity");
+  }
+  const personId = candidate.personId.trim().toLowerCase();
+  const publicKeyDer = candidate.publicKeyDer.trim();
+  if (!/^[a-f0-9]{64}$/.test(personId) || !/^[A-Za-z0-9+/]+={0,2}$/.test(publicKeyDer)) {
+    throw new Error("invalid authenticator identity");
+  }
+  const der = Buffer.from(publicKeyDer, "base64");
+  if (der.length < 64 || der.length > 256 || der.toString("base64") !== publicKeyDer) {
+    throw new Error("invalid authenticator public key");
+  }
+  const key = createPublicKey({ key: der, format: "der", type: "spki" });
+  const details = key.asymmetricKeyDetails;
+  if (key.asymmetricKeyType !== "ec" || details?.namedCurve !== "prime256v1") {
+    throw new Error("authenticator key must be P-256");
+  }
+  if (createHash("sha256").update(der).digest("hex") !== personId) {
+    throw new Error("authenticator personId mismatch");
+  }
+  return { personId, publicKeyDer };
 }
 
 function isLikelyApnsToken(value: string): boolean {
@@ -290,6 +327,7 @@ function normalizeDirectRegistration(
     topic,
     environment,
     updatedAtMs,
+    authenticator: normalizeAuthenticatorIdentity(record.authenticator),
   };
 }
 
@@ -341,6 +379,7 @@ function normalizeRelayRegistration(
     distribution,
     updatedAtMs,
     tokenDebugSuffix: normalizeTokenDebugSuffix(record.tokenDebugSuffix),
+    authenticator: normalizeAuthenticatorIdentity(record.authenticator),
   };
 }
 
@@ -453,6 +492,7 @@ export async function registerApnsRegistration(
         distribution,
         updatedAtMs,
         tokenDebugSuffix: normalizeTokenDebugSuffix(params.tokenDebugSuffix),
+        authenticator: normalizeAuthenticatorIdentity(params.authenticator),
       };
     } else {
       const token = normalizeApnsToken(params.token);
@@ -467,6 +507,7 @@ export async function registerApnsRegistration(
         topic,
         environment,
         updatedAtMs,
+        authenticator: normalizeAuthenticatorIdentity(params.authenticator),
       };
     }
 
@@ -501,6 +542,19 @@ export async function loadApnsRegistration(
   return state.registrationsByNodeId[normalizedNodeId] ?? null;
 }
 
+export async function listApnsAuthenticatorIdentities(
+  baseDir?: string,
+): Promise<Array<{ nodeId: string; identity: AuthenticatorIdentity; updatedAtMs: number }>> {
+  const state = await loadRegistrationsState(baseDir);
+  return Object.values(state.registrationsByNodeId)
+    .filter((registration) => registration.authenticator)
+    .map((registration) => ({
+      nodeId: registration.nodeId,
+      identity: registration.authenticator!,
+      updatedAtMs: registration.updatedAtMs,
+    }));
+}
+
 export async function clearApnsRegistration(nodeId: string, baseDir?: string): Promise<boolean> {
   const normalizedNodeId = normalizeNodeId(nodeId);
   if (!normalizedNodeId) {
@@ -524,6 +578,12 @@ function isSameApnsRegistration(a: ApnsRegistration, b: ApnsRegistration): boole
     a.topic !== b.topic ||
     a.environment !== b.environment ||
     a.updatedAtMs !== b.updatedAtMs
+  ) {
+    return false;
+  }
+  if (
+    a.authenticator?.personId !== b.authenticator?.personId ||
+    a.authenticator?.publicKeyDer !== b.authenticator?.publicKeyDer
   ) {
     return false;
   }

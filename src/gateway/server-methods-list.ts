@@ -42,6 +42,7 @@ const BASE_METHODS = [
   "exec.approval.request",
   "exec.approval.waitDecision",
   "exec.approval.resolve",
+  "exec.approval.authenticator.targets",
   "plugin.approval.list",
   "plugin.approval.request",
   "plugin.approval.waitDecision",

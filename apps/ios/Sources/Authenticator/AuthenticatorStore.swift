@@ -138,6 +138,18 @@ actor AuthenticatorStore {
     private let service = "ai.openclaw.ios.authenticator"
     private let account = "p256-signing-key-v1"
 
+    struct Identity: Encodable, Equatable {
+        let personId: String
+        let publicKeyDer: String
+    }
+
+    func identity() throws -> Identity {
+        let key = try self.loadOrCreateKey()
+        let publicDER = Self.publicKeyDER(key.publicKeyX963)
+        let personID = SHA256.hash(data: publicDER).map { String(format: "%02x", $0) }.joined()
+        return Identity(personId: personID, publicKeyDer: publicDER.base64EncodedString())
+    }
+
     func makeResolution(
         challenge: AuthenticatorChallenge,
         enteredCode: String,

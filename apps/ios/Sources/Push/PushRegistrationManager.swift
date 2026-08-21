@@ -6,6 +6,7 @@ private struct DirectGatewayPushRegistrationPayload: Encodable {
     var token: String
     var topic: String
     var environment: String
+    var authenticator: AuthenticatorStore.Identity
 }
 
 private struct RelayGatewayPushRegistrationPayload: Encodable {
@@ -18,6 +19,7 @@ private struct RelayGatewayPushRegistrationPayload: Encodable {
     var environment: String
     var distribution: String
     var tokenDebugSuffix: String?
+    var authenticator: AuthenticatorStore.Identity
 }
 
 struct PushRelayGatewayIdentity: Codable {
@@ -43,13 +45,15 @@ actor PushRegistrationManager {
         topic: String,
         gatewayIdentity: PushRelayGatewayIdentity?)
     async throws -> String {
+        let authenticator = try await AuthenticatorStore.shared.identity()
         switch self.buildConfig.transport {
         case .direct:
             return try Self.encodePayload(
                 DirectGatewayPushRegistrationPayload(
                     token: apnsTokenHex,
                     topic: topic,
-                    environment: self.buildConfig.apnsEnvironment.rawValue))
+                    environment: self.buildConfig.apnsEnvironment.rawValue,
+                    authenticator: authenticator))
         case .relay:
             guard let gatewayIdentity else {
                 throw PushRelayError.relayMisconfigured("Missing gateway identity for relay registration")
@@ -57,14 +61,16 @@ actor PushRegistrationManager {
             return try await self.makeRelayPayload(
                 apnsTokenHex: apnsTokenHex,
                 topic: topic,
-                gatewayIdentity: gatewayIdentity)
+                gatewayIdentity: gatewayIdentity,
+                authenticator: authenticator)
         }
     }
 
     private func makeRelayPayload(
         apnsTokenHex: String,
         topic: String,
-        gatewayIdentity: PushRelayGatewayIdentity)
+        gatewayIdentity: PushRelayGatewayIdentity,
+        authenticator: AuthenticatorStore.Identity)
     async throws -> String {
         guard self.buildConfig.distribution == .official else {
             throw PushRelayError.relayMisconfigured(
@@ -107,7 +113,8 @@ actor PushRegistrationManager {
                     topic: topic,
                     environment: self.buildConfig.apnsEnvironment.rawValue,
                     distribution: self.buildConfig.distribution.rawValue,
-                    tokenDebugSuffix: stored.tokenDebugSuffix))
+                    tokenDebugSuffix: stored.tokenDebugSuffix,
+                    authenticator: authenticator))
         }
 
         let response = try await relayClient.register(
@@ -138,7 +145,8 @@ actor PushRegistrationManager {
                 topic: topic,
                 environment: self.buildConfig.apnsEnvironment.rawValue,
                 distribution: self.buildConfig.distribution.rawValue,
-                tokenDebugSuffix: registrationState.tokenDebugSuffix))
+                tokenDebugSuffix: registrationState.tokenDebugSuffix,
+                authenticator: authenticator))
     }
 
     private static func isExpired(_ expiresAtMs: Int64?) -> Bool {

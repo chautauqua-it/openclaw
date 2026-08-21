@@ -783,6 +783,7 @@ export const handleNodeEvent = async (
             environment,
             distribution: obj.distribution,
             tokenDebugSuffix: obj.tokenDebugSuffix,
+            authenticator: obj.authenticator,
           });
         } else {
           await registerApnsRegistration({
@@ -791,6 +792,7 @@ export const handleNodeEvent = async (
             token: typeof obj.token === "string" ? obj.token : "",
             topic,
             environment,
+            authenticator: obj.authenticator,
           });
         }
       } catch (err) {

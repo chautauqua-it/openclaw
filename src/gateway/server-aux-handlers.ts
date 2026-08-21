@@ -2,6 +2,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { type PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
+import { listApnsAuthenticatorIdentities } from "../infra/push-apns.js";
 import {
   resolveCommandSecretsFromActiveRuntimeSnapshot,
   type CommandSecretAssignment,
@@ -207,6 +208,29 @@ export function createGatewayAuxHandlers(params: {
     pluginApprovalManager,
     extraHandlers: {
       ...execApprovalHandlers,
+      "exec.approval.authenticator.targets": async ({ params: methodParams, respond }) => {
+        if (
+          !methodParams ||
+          typeof methodParams !== "object" ||
+          Array.isArray(methodParams) ||
+          Object.keys(methodParams as Record<string, unknown>).length !== 0
+        ) {
+          respond(false, undefined, { code: "INVALID_REQUEST", message: "params must be empty" });
+          return;
+        }
+        const targets = await listApnsAuthenticatorIdentities();
+        respond(
+          true,
+          {
+            targets: targets.map(({ nodeId, identity, updatedAtMs }) => ({
+              nodeId,
+              personId: identity.personId,
+              updatedAtMs,
+            })),
+          },
+          undefined,
+        );
+      },
       ...pluginApprovalHandlers,
       ...secretsHandlers,
     },

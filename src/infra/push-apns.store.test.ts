@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,7 @@ import {
   clearApnsRegistration,
   clearApnsRegistrationIfCurrent,
   loadApnsRegistration,
+  listApnsAuthenticatorIdentities,
   registerApnsRegistration,
   registerApnsToken,
 } from "./push-apns.js";
@@ -21,6 +23,38 @@ afterEach(async () => {
 });
 
 describe("push APNs registration store", () => {
+  it("persists only a P-256 authenticator identity bound to its DER hash", async () => {
+    const baseDir = await makeTempDir();
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const der = publicKey.export({ format: "der", type: "spki" });
+    const authenticator = {
+      personId: createHash("sha256").update(der).digest("hex"),
+      publicKeyDer: der.toString("base64"),
+    };
+
+    await registerApnsToken({
+      nodeId: "ios-authenticator",
+      token: "ABCD1234ABCD1234ABCD1234ABCD1234",
+      topic: "it.differen.openclaw",
+      environment: "production",
+      authenticator,
+      baseDir,
+    });
+
+    await expect(listApnsAuthenticatorIdentities(baseDir)).resolves.toEqual([
+      expect.objectContaining({ nodeId: "ios-authenticator", identity: authenticator }),
+    ]);
+    await expect(
+      registerApnsToken({
+        nodeId: "ios-forged",
+        token: "ABCD1234ABCD1234ABCD1234ABCD1234",
+        topic: "it.differen.openclaw",
+        authenticator: { ...authenticator, personId: "0".repeat(64) },
+        baseDir,
+      }),
+    ).rejects.toThrow("authenticator personId mismatch");
+  });
+
   it("stores and reloads direct APNs registrations", async () => {
     const baseDir = await makeTempDir();
     const saved = await registerApnsToken({
