@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildExecApprovalAuthenticatorDigest,
+  ExecApprovalAuthenticatorFatigueGuard,
   publicAuthenticatorRequest,
   verifyExecApprovalAuthenticatorProof,
   type ExecApprovalAuthenticatorRequest,
@@ -84,5 +85,55 @@ describe("exec approval authenticator", () => {
   it("never exposes the short-code verifier to clients", () => {
     const { request } = fixture();
     expect(publicAuthenticatorRequest(request)).not.toHaveProperty("matchCodeHash");
+  });
+});
+
+describe("ExecApprovalAuthenticatorFatigueGuard", () => {
+  it("enforces the cooldown between prompts to the same person", () => {
+    const guard = new ExecApprovalAuthenticatorFatigueGuard({
+      cooldownMs: 5_000,
+      maxPromptsPerWindow: 5,
+      windowMs: 60_000,
+    });
+    expect(guard.check("person-a", 0).ok).toBe(true);
+    const second = guard.check("person-a", 4_999);
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.reason).toContain("cooldown");
+    }
+    expect(guard.check("person-a", 5_000).ok).toBe(true);
+  });
+
+  it("caps prompt volume per rolling window", () => {
+    const guard = new ExecApprovalAuthenticatorFatigueGuard({
+      cooldownMs: 1,
+      maxPromptsPerWindow: 3,
+      windowMs: 60_000,
+    });
+    expect(guard.check("person-a", 0).ok).toBe(true);
+    expect(guard.check("person-a", 10_000).ok).toBe(true);
+    expect(guard.check("person-a", 20_000).ok).toBe(true);
+    const fourth = guard.check("person-a", 30_000);
+    expect(fourth.ok).toBe(false);
+    if (!fourth.ok) {
+      expect(fourth.reason).toContain("too many");
+    }
+    // Outside the window the history is pruned and prompts resume.
+    expect(guard.check("person-a", 70_001).ok).toBe(true);
+  });
+
+  it("tracks persons independently and refusals do not consume budget", () => {
+    const guard = new ExecApprovalAuthenticatorFatigueGuard({
+      cooldownMs: 5_000,
+      maxPromptsPerWindow: 2,
+      windowMs: 60_000,
+    });
+    expect(guard.check("person-a", 0).ok).toBe(true);
+    expect(guard.check("person-b", 0).ok).toBe(true);
+    expect(guard.check("person-a", 1_000).ok).toBe(false);
+    expect(guard.check("person-a", 1_500).ok).toBe(false);
+    // Only one granted prompt so far: the next allowed slot still exists.
+    expect(guard.check("person-a", 5_000).ok).toBe(true);
+    expect(guard.check("person-a", 10_000).ok).toBe(false);
   });
 });

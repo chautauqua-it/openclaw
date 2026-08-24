@@ -47,6 +47,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "exec.approval.waitDecision",
     "exec.approval.resolve",
     "exec.approval.authenticator.targets",
+    "exec.approval.authenticator.revoke",
     "plugin.approval.list",
     "plugin.approval.request",
     "plugin.approval.waitDecision",

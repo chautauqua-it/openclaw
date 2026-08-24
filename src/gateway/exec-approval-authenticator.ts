@@ -26,6 +26,36 @@ export type ExecApprovalAuthenticatorProof = {
   publicKeyDer: string;
 };
 
+// Anti-fatigue guard mirroring dtail-agent internal/authn: a cooldown between
+// prompts to the same person plus a volume cap per rolling window, enforced
+// BEFORE a prompt is created so an attacker cannot even cause push spam.
+export class ExecApprovalAuthenticatorFatigueGuard {
+  private readonly cooldownMs: number;
+  private readonly maxPromptsPerWindow: number;
+  private readonly windowMs: number;
+  private readonly prompts = new Map<string, number[]>();
+
+  constructor(opts?: { cooldownMs?: number; maxPromptsPerWindow?: number; windowMs?: number }) {
+    this.cooldownMs = opts?.cooldownMs ?? 5_000;
+    this.maxPromptsPerWindow = opts?.maxPromptsPerWindow ?? 5;
+    this.windowMs = opts?.windowMs ?? 60_000;
+  }
+
+  check(personId: string, nowMs = Date.now()): { ok: true } | { ok: false; reason: string } {
+    const pruned = (this.prompts.get(personId) ?? []).filter((t) => t > nowMs - this.windowMs);
+    this.prompts.set(personId, pruned);
+    const last = pruned.at(-1);
+    if (last !== undefined && nowMs - last < this.cooldownMs) {
+      return { ok: false, reason: "authenticator prompt cooldown active (anti-fatigue)" };
+    }
+    if (pruned.length >= this.maxPromptsPerWindow) {
+      return { ok: false, reason: "too many authenticator prompts in window (anti-fatigue)" };
+    }
+    pruned.push(nowMs);
+    return { ok: true };
+  }
+}
+
 function lengthPrefixed(value: string): Buffer {
   const body = Buffer.from(value, "utf8");
   const prefix = Buffer.allocUnsafe(4);

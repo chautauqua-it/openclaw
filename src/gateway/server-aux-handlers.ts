@@ -2,7 +2,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { type PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
-import { listApnsAuthenticatorIdentities } from "../infra/push-apns.js";
+import { clearApnsRegistration, listApnsAuthenticatorIdentities } from "../infra/push-apns.js";
 import {
   resolveCommandSecretsFromActiveRuntimeSnapshot,
   type CommandSecretAssignment,
@@ -230,6 +230,27 @@ export function createGatewayAuxHandlers(params: {
           },
           undefined,
         );
+      },
+      // Remote revocation: clearing the push registration removes the node's
+      // authenticator identity from the target list, so a lost phone can no
+      // longer be prompted or approve anything, even with a valid local key.
+      "exec.approval.authenticator.revoke": async ({ params: methodParams, respond }) => {
+        const nodeId =
+          methodParams &&
+          typeof methodParams === "object" &&
+          !Array.isArray(methodParams) &&
+          typeof (methodParams as { nodeId?: unknown }).nodeId === "string"
+            ? (methodParams as { nodeId: string }).nodeId.trim()
+            : "";
+        if (!nodeId || Object.keys(methodParams as Record<string, unknown>).length !== 1) {
+          respond(false, undefined, {
+            code: "INVALID_REQUEST",
+            message: "params must be { nodeId }",
+          });
+          return;
+        }
+        const removed = await clearApnsRegistration(nodeId);
+        respond(true, { nodeId, removed }, undefined);
       },
       ...pluginApprovalHandlers,
       ...secretsHandlers,

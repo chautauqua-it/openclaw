@@ -19,6 +19,7 @@ import {
 import { resolveSystemRunApprovalRequestContext } from "../../infra/system-run-approval-context.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import {
+  ExecApprovalAuthenticatorFatigueGuard,
   publicAuthenticatorRequest,
   verifyExecApprovalAuthenticatorProof,
   type ExecApprovalAuthenticatorProof,
@@ -62,6 +63,7 @@ export function createExecApprovalHandlers(
   // broadcasts, list/get responses and push payloads. A short-code hash is
   // brute-forceable and therefore must be treated like the code itself.
   const authenticatorCodeHashes = new Map<string, string>();
+  const authenticatorFatigueGuard = new ExecApprovalAuthenticatorFatigueGuard();
   return {
     "exec.approval.get": async ({ params, respond }) => {
       if (!validateExecApprovalGetParams(params)) {
@@ -252,6 +254,13 @@ export function createExecApprovalHandlers(
           ),
         );
         return;
+      }
+      if (p.authenticator) {
+        const fatigue = authenticatorFatigueGuard.check(p.authenticator.personId);
+        if (!fatigue.ok) {
+          respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, fatigue.reason));
+          return;
+        }
       }
       const request = {
         command: sanitizeExecApprovalDisplayText(effectiveCommandText),
