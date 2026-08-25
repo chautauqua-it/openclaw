@@ -3208,6 +3208,11 @@ extension NodeAppModel {
             sourceReason: "push_request")
         switch fetchedPrompt {
         case let .loaded(prompt):
+            // A remote approval push must surface the native iPhone dialog as
+            // soon as the app wakes. Keeping it only in the watch recovery
+            // store makes a notification tap open the app without showing the
+            // approval card.
+            self.presentFetchedExecApprovalPrompt(prompt)
             self.upsertWatchExecApprovalPrompt(prompt)
             await self.publishWatchExecApprovalPrompt(prompt, reason: "push_request")
             return true

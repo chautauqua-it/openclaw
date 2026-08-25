@@ -19,7 +19,7 @@ enum ExecApprovalNotificationBridge {
             actions: [
                 UNNotificationAction(
                     identifier: self.reviewActionIdentifier,
-                    title: "Review",
+                    title: "Apri richiesta",
                     options: [.foreground]),
             ],
             intentIdentifiers: [],

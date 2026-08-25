@@ -77,7 +77,8 @@ export type ApnsPushResult = {
 export type ApnsPushAlertResult = ApnsPushResult;
 export type ApnsPushWakeResult = ApnsPushResult;
 
-const EXEC_APPROVAL_GENERIC_ALERT_BODY = "Open OpenClaw to review this request.";
+const EXEC_APPROVAL_GENERIC_ALERT_BODY =
+  "Tocca per verificare i dettagli e autorizzare con Face ID.";
 const EXEC_APPROVAL_NOTIFICATION_CATEGORY = "openclaw.exec-approval";
 
 type ApnsPushType = "alert" | "background";
@@ -965,7 +966,7 @@ function createExecApprovalAlertPayload(params: { nodeId: string; approvalId: st
   return {
     aps: {
       alert: {
-        title: "Exec approval required",
+        title: "Iànua · Autorizzazione richiesta",
         body: resolveExecApprovalAlertBody(),
       },
       sound: "default",

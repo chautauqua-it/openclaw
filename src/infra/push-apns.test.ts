@@ -183,8 +183,8 @@ describe("push APNs send semantics", () => {
     expect(sent?.payload).toMatchObject({
       aps: {
         alert: {
-          title: "Exec approval required",
-          body: "Open OpenClaw to review this request.",
+          title: "Iànua · Autorizzazione richiesta",
+          body: "Tocca per verificare i dettagli e autorizzare con Face ID.",
         },
         sound: "default",
         category: "openclaw.exec-approval",
@@ -451,8 +451,8 @@ describe("push APNs send semantics", () => {
     expect(sent?.payload).toMatchObject({
       aps: {
         alert: {
-          title: "Exec approval required",
-          body: "Open OpenClaw to review this request.",
+          title: "Iànua · Autorizzazione richiesta",
+          body: "Tocca per verificare i dettagli e autorizzare con Face ID.",
         },
         category: "openclaw.exec-approval",
         "content-available": 1,
