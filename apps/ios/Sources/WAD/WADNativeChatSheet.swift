@@ -35,6 +35,7 @@ private struct IanuaChannel: Decodable, Identifiable, Hashable {
     let sottotitolo: String?
     let unread: Int?
     let archived: Bool?
+    let lastAt: String?
     let runStatus: IanuaRunStatus?
 
     /// I colleghi arrivano dal server con `nome`/`email`, gli altri canali con `name`.
@@ -55,12 +56,13 @@ private struct IanuaChannel: Decodable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, nome, email, emoji, topic, sottotitolo, unread, archived
+        case lastAt = "last_at"
         case rawName = "name"
         case runStatus = "run_status"
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.name == rhs.name && lhs.unread == rhs.unread
+        lhs.id == rhs.id && lhs.name == rhs.name && lhs.unread == rhs.unread && lhs.lastAt == rhs.lastAt
             && lhs.runStatus == rhs.runStatus
     }
 
@@ -163,21 +165,42 @@ private actor IanuaChatAPI {
         mime: String? = nil) async throws -> Data
     {
         guard let url = URL(string: self.baseURL + path) else { throw WADAPIError.server("URL Iànua non valido") }
-        var request = URLRequest(url: url); request.httpMethod = method; request.timeoutInterval = 35
-        if let json { request.httpBody = try JSONSerialization.data(withJSONObject: json); request.setValue(
-            "application/json",
-            forHTTPHeaderField: "Content-Type") }
-        if let data { request.httpBody = data; request.setValue(
-            mime ?? "application/octet-stream",
-            forHTTPHeaderField: "Content-Type") }
-        let (body, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw WADAPIError.unreachable }
-        guard (200...299).contains(http.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
-            throw http.statusCode == 401 ? WADAPIError.unauthorized : WADAPIError
-                .server(message ?? "Errore Iànua \(http.statusCode)")
+        let attempts = method == "GET" ? 3 : 1
+        let retryableStatusCodes = Set([502, 503, 504])
+        let retryableURLErrors: Set<URLError.Code> = [
+            .cannotConnectToHost,
+            .dnsLookupFailed,
+            .networkConnectionLost,
+            .notConnectedToInternet,
+            .timedOut,
+        ]
+
+        for attempt in 0..<attempts {
+            do {
+                var request = URLRequest(url: url); request.httpMethod = method; request.timeoutInterval = 35
+                if let json { request.httpBody = try JSONSerialization.data(withJSONObject: json); request.setValue(
+                    "application/json",
+                    forHTTPHeaderField: "Content-Type") }
+                if let data { request.httpBody = data; request.setValue(
+                    mime ?? "application/octet-stream",
+                    forHTTPHeaderField: "Content-Type") }
+                let (body, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw WADAPIError.unreachable }
+                if (200...299).contains(http.statusCode) { return body }
+                if attempt + 1 < attempts, retryableStatusCodes.contains(http.statusCode) {
+                    try await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
+                    continue
+                }
+                let message = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
+                throw http.statusCode == 401 ? WADAPIError.unauthorized : WADAPIError
+                    .server(message ?? "Errore Iànua \(http.statusCode)")
+            } catch let error as URLError
+                where attempt + 1 < attempts && retryableURLErrors.contains(error.code) && !Task.isCancelled
+            {
+                try await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
+            }
         }
-        return body
+        throw WADAPIError.unreachable
     }
 
     func authenticated() async -> Bool {
@@ -284,6 +307,7 @@ private actor IanuaChatAPI {
 
 @MainActor private final class IanuaChatModel: ObservableObject {
     enum Phase: Equatable { case loading, loggedOut, loggedIn }
+    enum ReloadResult: Equatable { case success, unauthorized, failed }
 
     @Published var phase: Phase = .loading
     @Published var payload: IanuaChannelPayload?
@@ -297,8 +321,10 @@ private actor IanuaChatAPI {
 
     func bootstrap() async {
         if await IanuaChatAPI.shared.authenticated() {
-            self.phase = .loggedIn
-            await self.reload()
+            // Carica i canali PRIMA di sostituire la vista di bootstrap: una
+            // transizione anticipata cancella il `.task` e chiude la GET (499).
+            let result = await self.reload()
+            if result != .unauthorized { self.phase = .loggedIn }
             // PushKit può consegnare il token VoIP prima che la sessione sia
             // valida: dopo il bootstrap autenticato serve un retry esplicito.
             WADCallCenter.shared.refreshVoipTokenRegistration()
@@ -318,8 +344,10 @@ private actor IanuaChatAPI {
                 return
             }
             self.memberships = nil
-            self.phase = .loggedIn
-            await self.reload()
+            // Anche qui il task appartiene alla vista login: la schermata deve
+            // cambiare solo quando il primo snapshot dei canali è terminato.
+            let reloadResult = await self.reload()
+            if reloadResult != .unauthorized { self.phase = .loggedIn }
             WADCallCenter.shared.refreshVoipTokenRegistration()
         } catch {
             if case WADAPIError.unauthorized = error {
@@ -336,18 +364,21 @@ private actor IanuaChatAPI {
         self.phase = .loggedOut
     }
 
-    func reload() async {
+    @discardableResult
+    func reload() async -> ReloadResult {
         do {
             self.payload = try await IanuaChatAPI.shared.channels()
             self.error = nil
+            return .success
         } catch {
             if case WADAPIError.unauthorized = error {
                 self.phase = .loggedOut
-                return
+                return .unauthorized
             }
             if self.payload == nil {
                 self.error = (error as? LocalizedError)?.errorDescription ?? "Errore di caricamento"
             }
+            return .failed
         }
     }
 }
@@ -536,6 +567,7 @@ private struct IanuaChannelListView: View {
 
     private func channelList(_ payload: IanuaChannelPayload) -> some View {
         let channels = payload.agentChannels.filter { $0.archived != true }
+        let colleagues = payload.colleagues.sorted(by: Self.recentInteractionFirst)
         return List {
             Section("Assistente") {
                 self.row(payload.agent, icon: "sparkles")
@@ -547,7 +579,14 @@ private struct IanuaChannelListView: View {
             }
             if !channels.isEmpty {
                 self.collapsibleSection("Canali", collapsed: self.$channelsCollapsed, channels: channels) {
-                    ForEach(channels) { self.row($0, icon: "number") }
+                    ForEach(self.groupedChannels(channels)) { group in
+                        Text(group.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(group.channels) { self.row($0, icon: "number") }
+                    }
                 }
             }
             if !payload.groups.isEmpty {
@@ -555,18 +594,71 @@ private struct IanuaChannelListView: View {
                     ForEach(payload.groups) { self.row($0, icon: "person.3.fill") }
                 }
             }
-            if !payload.colleagues.isEmpty {
+            if !colleagues.isEmpty {
                 self.collapsibleSection(
                     "Colleghi",
                     collapsed: self.$colleaguesCollapsed,
-                    channels: payload.colleagues)
+                    channels: colleagues)
                 {
-                    ForEach(payload.colleagues) { self.row($0, icon: "person.fill") }
+                    ForEach(colleagues) { self.row($0, icon: "person.fill") }
                 }
             }
         }
         .listStyle(.insetGrouped)
         .refreshable { await self.model.reload() }
+    }
+
+    private struct ChannelGroup: Identifiable {
+        let title: String
+        let channels: [IanuaChannel]
+        var id: String {
+            self.title
+        }
+    }
+
+    /// Stessi separatori predefiniti della chat web Iànua. I canali nuovi o
+    /// personalizzati restano visibili in "Altri", senza perdersi.
+    private func groupedChannels(_ channels: [IanuaChannel]) -> [ChannelGroup] {
+        let definitions: [(String, Set<String>)] = [
+            (
+                "Progetti",
+                ["sviluppo", "book-editor", "chautauqua", "efesto", "hermes", "bug", "siti", "repository"]),
+            (
+                "Azienda",
+                [
+                    "company-control",
+                    "finance-excel",
+                    "marketing",
+                    "todoist",
+                    "email",
+                    "legal",
+                    "email triage",
+                    "liste",
+                ]),
+            ("Personale", ["family-life", "universita", "investing", "calendar", "note"]),
+            ("Sistema", ["setup", "security-log", "mio pc"]),
+        ]
+        var assigned = Set<String>()
+        var result: [ChannelGroup] = []
+        for (title, names) in definitions {
+            let members = channels.filter { names.contains($0.name.lowercased()) }
+            guard !members.isEmpty else { continue }
+            assigned.formUnion(members.map(\.id))
+            result.append(ChannelGroup(title: title, channels: members))
+        }
+        let other = channels.filter { !assigned.contains($0.id) }
+        if !other.isEmpty { result.append(ChannelGroup(title: "Altri", channels: other)) }
+        return result
+    }
+
+    /// Difesa client oltre all'ordinamento server: ultimo DM in alto come
+    /// WhatsApp, contatti senza storico in coda alfabetica.
+    private static func recentInteractionFirst(_ lhs: IanuaChannel, _ rhs: IanuaChannel) -> Bool {
+        let left = wadParseTimestamp(lhs.lastAt)
+        let right = wadParseTimestamp(rhs.lastAt)
+        if let left, let right, left != right { return left > right }
+        if (left != nil) != (right != nil) { return left != nil }
+        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
     }
 
     /// Sezione con header tappabile: collassa/espande il gruppo e ricorda lo
@@ -1411,7 +1503,8 @@ private struct IanuaSendSecretView: View {
                 }
                 Section {
                     Text(
-                        "Il valore viene cifrato dal server: nel messaggio appare solo un 🔒 e si legge con «Rivela». Scade da solo.")
+                        "Il valore viene cifrato dal server: nel messaggio appare solo un 🔒 "
+                            + "e si legge con «Rivela». Scade da solo.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
