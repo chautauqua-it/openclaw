@@ -471,6 +471,10 @@ private struct IanuaLoginView: View {
 private struct IanuaChannelListView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: IanuaChatModel
+    @AppStorage("ianua.chat.collapsed.agents") private var agentsCollapsed = false
+    @AppStorage("ianua.chat.collapsed.channels") private var channelsCollapsed = false
+    @AppStorage("ianua.chat.collapsed.groups") private var groupsCollapsed = false
+    @AppStorage("ianua.chat.collapsed.colleagues") private var colleaguesCollapsed = false
 
     var body: some View {
         Group {
@@ -537,28 +541,70 @@ private struct IanuaChannelListView: View {
                 self.row(payload.agent, icon: "sparkles")
             }
             if !payload.agents.isEmpty {
-                Section("Agenti") {
+                self.collapsibleSection("Agenti", collapsed: self.$agentsCollapsed, channels: payload.agents) {
                     ForEach(payload.agents) { self.row($0, icon: "person.crop.square.badge.camera") }
                 }
             }
             if !channels.isEmpty {
-                Section("Canali") {
+                self.collapsibleSection("Canali", collapsed: self.$channelsCollapsed, channels: channels) {
                     ForEach(channels) { self.row($0, icon: "number") }
                 }
             }
             if !payload.groups.isEmpty {
-                Section("Gruppi") {
+                self.collapsibleSection("Gruppi", collapsed: self.$groupsCollapsed, channels: payload.groups) {
                     ForEach(payload.groups) { self.row($0, icon: "person.3.fill") }
                 }
             }
             if !payload.colleagues.isEmpty {
-                Section("Colleghi") {
+                self.collapsibleSection(
+                    "Colleghi",
+                    collapsed: self.$colleaguesCollapsed,
+                    channels: payload.colleagues)
+                {
                     ForEach(payload.colleagues) { self.row($0, icon: "person.fill") }
                 }
             }
         }
         .listStyle(.insetGrouped)
         .refreshable { await self.model.reload() }
+    }
+
+    /// Sezione con header tappabile: collassa/espande il gruppo e ricorda lo
+    /// stato tra le aperture. Da collassata mostra il totale dei non letti.
+    private func collapsibleSection(
+        _ title: String,
+        collapsed: Binding<Bool>,
+        channels: [IanuaChannel],
+        @ViewBuilder content: () -> some View) -> some View
+    {
+        let unread = channels.reduce(0) { $0 + ($1.unread ?? 0) }
+        return Section {
+            if !collapsed.wrappedValue {
+                content()
+            }
+        } header: {
+            Button {
+                withAnimation(.snappy) { collapsed.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(title)
+                    if collapsed.wrappedValue, unread > 0 {
+                        Text("\(unread)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(.red))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(collapsed.wrappedValue ? -90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func row(_ channel: IanuaChannel, icon: String) -> some View {
