@@ -223,6 +223,34 @@ actor WADAPIClient {
             options: WADRequestOptions(method: "POST", json: ["emoji": emoji]))
     }
 
+    /// 🔒 Consegna sicura di una password nel canale: il valore non finisce mai
+    /// nel body, il server salva cifrato e nel messaggio resta solo il marker.
+    @discardableResult
+    func sendSecret(
+        channelId: String,
+        label: String,
+        value: String,
+        replyTo: String? = nil) async throws -> WADChatMessage
+    {
+        struct Response: Decodable { let message: WADChatMessage }
+        var payload: WADJSON = ["channel": channelId, "label": label, "value": value]
+        if let replyTo { payload["reply_to"] = replyTo }
+        let data = try await self.request(
+            "/api/chat/secret",
+            options: WADRequestOptions(method: "POST", json: payload))
+        return try self.decode(Response.self, from: data).message
+    }
+
+    /// Rivela il valore di un segreto on-demand. Il valore NON viene mai messo in
+    /// cache su disco né in log: resta solo in memoria finché la card è aperta.
+    func revealSecret(id: String) async throws -> WADChatSecret {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let data = try await self.request(
+            "/api/chat/secrets/\(encoded)/reveal",
+            options: WADRequestOptions(method: "POST", json: [:]))
+        return try self.decode(WADChatSecret.self, from: data)
+    }
+
     nonisolated func attachmentURL(_ id: String) -> URL? {
         URL(string: self.baseURL + "/api/chat/attachments/\(id)")
     }
@@ -421,6 +449,53 @@ struct WADChatMessage: Codable, Identifiable, Equatable {
     var isPinned: Bool {
         self.pinned == true
     }
+
+    /// Segreto 🔒 contenuto nel body come marker `[[segreto:<id>|<label>]]`: il
+    /// valore non è mai nel testo, si ottiene solo con `revealSecret`.
+    var secret: WADSecretMarker? {
+        WADSecretMarker.parse(from: self.body)
+    }
+
+    /// Body senza il marker del segreto, per non mostrare la stringa grezza.
+    var bodyWithoutSecret: String {
+        WADSecretMarker.stripping(from: self.body)
+    }
+}
+
+/// Marker `[[segreto:<id>|<label>]]` estratto dal body di un messaggio.
+struct WADSecretMarker: Equatable {
+    let id: String
+    let label: String
+
+    // id: caratteri "sicuri" (no `|` né `]`); label: tutto tranne `]`.
+    private static let regex = try? NSRegularExpression(
+        pattern: "\\[\\[segreto:([^|\\]]+)\\|([^\\]]*)\\]\\]")
+
+    static func parse(from body: String) -> WADSecretMarker? {
+        guard let regex else { return nil }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        guard let match = regex.firstMatch(in: body, range: range),
+              let idRange = Range(match.range(at: 1), in: body),
+              let labelRange = Range(match.range(at: 2), in: body) else { return nil }
+        let id = String(body[idRange]).trimmingCharacters(in: .whitespaces)
+        let label = String(body[labelRange]).trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty else { return nil }
+        return WADSecretMarker(id: id, label: label)
+    }
+
+    static func stripping(from body: String) -> String {
+        guard let regex else { return body }
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        let stripped = regex.stringByReplacingMatches(in: body, range: range, withTemplate: "")
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Valore rivelato di un segreto: tenuto solo in memoria, mai persistito.
+struct WADChatSecret: Codable, Equatable {
+    let label: String
+    let value: String
+    let senderName: String?
 }
 
 struct WADChatBusy: Codable, Equatable {

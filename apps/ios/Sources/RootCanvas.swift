@@ -126,7 +126,7 @@ struct RootCanvas: View {
         .sheet(item: self.$presentedSheet) { sheet in
             switch sheet {
             case .wadChat:
-                WADNativeChatSheet()
+                IanuaNativeChatSheet()
             case .settings:
                 SettingsTab()
                     .environment(self.appModel)
