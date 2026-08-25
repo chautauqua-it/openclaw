@@ -74,6 +74,23 @@ private struct IanuaMe: Decodable {
     enum CodingKeys: String, CodingKey { case userId = "user_id" }
 }
 
+/// Membership proposta dal chooser di /api/login quando la stessa email è
+/// attiva su più tenant.
+private struct IanuaMembership: Decodable, Identifiable, Equatable {
+    let userId: Int
+    let slug: String
+    let nome: String
+
+    var id: Int {
+        self.userId
+    }
+}
+
+private enum IanuaLoginResult {
+    case ok
+    case chooser([IanuaMembership])
+}
+
 private struct IanuaChannelPayload: Decodable {
     let agent: IanuaChannel
     let agents: [IanuaChannel]
@@ -167,11 +184,22 @@ private actor IanuaChatAPI {
         await (try? self.call("/api/me")) != nil
     }
 
-    func login(email: String, password: String) async throws {
-        _ = try await self.call(
-            "/api/login",
-            method: "POST",
-            json: ["email": email, "password": password])
+    /// Se l'email è attiva su più tenant il server risponde 200 col chooser e
+    /// SENZA cookie: la sessione parte solo dopo il secondo giro con userId.
+    func login(email: String, password: String, userId: Int? = nil) async throws -> IanuaLoginResult {
+        var json: [String: Any] = ["email": email, "password": password]
+        if let userId { json["userId"] = userId }
+        let data = try await self.call("/api/login", method: "POST", json: json)
+        struct Payload: Decodable {
+            let chooser: Bool?
+            let memberships: [IanuaMembership]?
+        }
+        if let payload = try? self.decoder.decode(Payload.self, from: data),
+           payload.chooser == true, let memberships = payload.memberships, !memberships.isEmpty
+        {
+            return .chooser(memberships)
+        }
+        return .ok
     }
 
     func logout() {
@@ -261,6 +289,7 @@ private actor IanuaChatAPI {
     @Published var payload: IanuaChannelPayload?
     @Published var error: String?
     @Published var busy = false
+    @Published var memberships: [IanuaMembership]?
 
     var myUserId: Int? {
         self.payload?.me?.userId
@@ -278,17 +307,26 @@ private actor IanuaChatAPI {
         }
     }
 
-    func login(email: String, password: String) async {
+    func login(email: String, password: String, userId: Int? = nil) async {
         self.busy = true
         self.error = nil
         defer { self.busy = false }
         do {
-            try await IanuaChatAPI.shared.login(email: email, password: password)
+            let result = try await IanuaChatAPI.shared.login(email: email, password: password, userId: userId)
+            if case let .chooser(list) = result {
+                self.memberships = list
+                return
+            }
+            self.memberships = nil
             self.phase = .loggedIn
             await self.reload()
             WADCallCenter.shared.refreshVoipTokenRegistration()
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? "Login fallito"
+            if case WADAPIError.unauthorized = error {
+                self.error = "Credenziali errate."
+            } else {
+                self.error = (error as? LocalizedError)?.errorDescription ?? "Login fallito"
+            }
         }
     }
 
@@ -376,22 +414,48 @@ private struct IanuaLoginView: View {
                     .padding(.horizontal, 32)
             }
 
-            Button {
-                Task { await self.model.login(email: self.email, password: self.password) }
-            } label: {
-                if self.model.busy {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else {
-                    Text("Entra").frame(maxWidth: .infinity)
+            if let memberships = model.memberships {
+                VStack(spacing: 10) {
+                    Text("Sei attivo su più aziende: scegli con quale entrare")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ForEach(memberships) { membership in
+                        Button {
+                            Task {
+                                await self.model.login(
+                                    email: self.email,
+                                    password: self.password,
+                                    userId: membership.userId)
+                            }
+                        } label: {
+                            Text(membership.nome).frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                    }
                 }
+                .padding(.horizontal, 32)
+                .disabled(self.model.busy)
+            } else {
+                Button {
+                    Task { await self.model.login(email: self.email, password: self.password) }
+                } label: {
+                    if self.model.busy {
+                        ProgressView().frame(maxWidth: .infinity)
+                    } else {
+                        Text("Entra").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.horizontal, 32)
+                .disabled(self.email.isEmpty || self.password.isEmpty || self.model.busy)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 32)
-            .disabled(self.email.isEmpty || self.password.isEmpty || self.model.busy)
 
             Spacer()
         }
+        .onChange(of: self.email) { self.model.memberships = nil }
+        .onChange(of: self.password) { self.model.memberships = nil }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button { self.dismiss() } label: {
