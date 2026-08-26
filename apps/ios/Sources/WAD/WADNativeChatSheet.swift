@@ -3,6 +3,9 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private typealias WADChannelGroup = (group: String, channels: [WADChatChannel])
 
@@ -203,14 +206,29 @@ private actor IanuaChatAPI {
         throw WADAPIError.unreachable
     }
 
-    func authenticated() async -> Bool {
-        await (try? self.call("/api/me")) != nil
+    /// Stato della sessione distinguendo l'errore transitorio (rete/server giù)
+    /// dal 401 vero. Serve al bootstrap: un timeout NON deve buttare fuori
+    /// l'utente, altrimenti un semplice deploy del server = ri-login.
+    enum SessionStatus { case valid, unauthorized, unreachable }
+
+    func sessionStatus() async -> SessionStatus {
+        do {
+            _ = try await self.call("/api/me")
+            return .valid
+        } catch WADAPIError.unauthorized {
+            return .unauthorized
+        } catch {
+            return .unreachable
+        }
     }
 
     /// Se l'email è attiva su più tenant il server risponde 200 col chooser e
     /// SENZA cookie: la sessione parte solo dopo il secondo giro con userId.
+    /// `client:"ios"` + `deviceName` fanno emettere al server una sessione
+    /// revocabile persistente a TTL lungo (cookie con Max-Age) → niente
+    /// ri-login a ogni apertura.
     func login(email: String, password: String, userId: Int? = nil) async throws -> IanuaLoginResult {
-        var json: [String: Any] = ["email": email, "password": password]
+        var json: [String: Any] = ["email": email, "password": password, "client": "ios", "deviceName": Self.deviceName]
         if let userId { json["userId"] = userId }
         let data = try await self.call("/api/login", method: "POST", json: json)
         struct Payload: Decodable {
@@ -222,13 +240,28 @@ private actor IanuaChatAPI {
         {
             return .chooser(memberships)
         }
+        // Login completo: rispecchia i cookie appena ricevuti nel Keychain.
+        IanuaSessionStore.persistCurrent()
         return .ok
     }
 
-    func logout() {
+    /// Logout esplicito: prima revoca lato server (la sessione sparisce da "I
+    /// miei dispositivi"), poi pulisce cookie e copia Keychain. La revoca è
+    /// best-effort: anche se il server è irraggiungibile, localmente usciamo.
+    func logout() async {
+        _ = try? await self.call("/api/logout", method: "POST", json: [:])
         HTTPCookieStorage.shared.cookies?.filter { $0.domain.contains("ianua.differen.it") }
             .forEach(HTTPCookieStorage.shared.deleteCookie)
+        IanuaSessionStore.clear()
     }
+
+    private static let deviceName: String = {
+        #if canImport(UIKit)
+        return UIDevice.current.name
+        #else
+        return "iOS"
+        #endif
+    }()
 
     func channels() async throws -> IanuaChannelPayload {
         try await self.decoder.decode(IanuaChannelPayload.self, from: self.call("/api/op/channels"))
@@ -320,7 +353,12 @@ private actor IanuaChatAPI {
     }
 
     func bootstrap() async {
-        if await IanuaChatAPI.shared.authenticated() {
+        // Ripristina i cookie dal Keychain se lo store condiviso li ha persi
+        // (cold start): così l'auto-login funziona anche quando iOS ha scartato
+        // i cookie di sessione.
+        IanuaSessionStore.restoreIfNeeded()
+        switch await IanuaChatAPI.shared.sessionStatus() {
+        case .valid:
             // Carica i canali PRIMA di sostituire la vista di bootstrap: una
             // transizione anticipata cancella il `.task` e chiude la GET (499).
             let result = await self.reload()
@@ -328,7 +366,19 @@ private actor IanuaChatAPI {
             // PushKit può consegnare il token VoIP prima che la sessione sia
             // valida: dopo il bootstrap autenticato serve un retry esplicito.
             WADCallCenter.shared.refreshVoipTokenRegistration()
-        } else {
+        case .unreachable:
+            // Server/rete non raggiungibili ma abbiamo una sessione persistita:
+            // NON buttare fuori l'utente (un deploy del server non deve = login).
+            // Entra e lascia che il poll con backoff riconnetta.
+            if IanuaSessionStore.hasPersistedSession() {
+                self.phase = .loggedIn
+                await self.reload()
+                WADCallCenter.shared.refreshVoipTokenRegistration()
+            } else {
+                self.phase = .loggedOut
+            }
+        case .unauthorized:
+            IanuaSessionStore.clear()
             self.phase = .loggedOut
         }
     }
@@ -372,6 +422,9 @@ private actor IanuaChatAPI {
             return .success
         } catch {
             if case WADAPIError.unauthorized = error {
+                // Sessione revocata/scaduta lato server (es. da "I miei
+                // dispositivi"): butta la copia Keychain così non si ri-ripristina.
+                IanuaSessionStore.clear()
                 self.phase = .loggedOut
                 return .unauthorized
             }
@@ -556,11 +609,20 @@ private struct IanuaChannelListView: View {
                 .environmentObject(self.model)
         }
         .task {
-            // Aggiorna i badge non letti mentre la lista resta a schermo.
+            // Poll dei badge + auto-reconnect. A regime ogni 20s; dopo un errore
+            // (server in deploy/riavvio, rete persa) accorcia l'attesa con
+            // backoff 3→6→12s così la riconnessione avviene entro ~30s, senza
+            // martellare quando il server è giù a lungo.
+            var backoff = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(20))
+                let delay = backoff == 0 ? 20 : min(3 << (backoff - 1), 12)
+                try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
-                await self.model.reload()
+                let result = await self.model.reload()
+                switch result {
+                case .success, .unauthorized: backoff = 0
+                case .failed: backoff = min(backoff + 1, 3)
+                }
             }
         }
     }
