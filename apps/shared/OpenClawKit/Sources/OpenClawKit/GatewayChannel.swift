@@ -48,8 +48,13 @@ public struct WebSocketTaskBox: @unchecked Sendable {
 
     public func sendPing() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let resumer = OnceResumer(continuation)
             self.task.sendPing { error in
-                ThrowingContinuationSupport.resumeVoid(continuation, error: error)
+                if let error {
+                    resumer.resume(throwing: error)
+                } else {
+                    resumer.resume(returning: ())
+                }
             }
         }
     }
