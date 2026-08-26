@@ -3235,12 +3235,12 @@ extension NodeAppModel {
         }
     }
 
-    // A push-delivered exec-approval carries only the approvalId; the app then
-    // fetches the challenge and presents the native card. That fetch needs a
-    // connected operator socket, so when the connection is flapping at wake time
-    // the first fetch fails with "operator not connected", the id survives only
-    // in the recovery store, and the iPhone card never appears. On (re)connect we
-    // retry the fetch and surface the card so a time-boxed challenge is not lost.
+    /// A push-delivered exec-approval carries only the approvalId; the app then
+    /// fetches the challenge and presents the native card. That fetch needs a
+    /// connected operator socket, so when the connection is flapping at wake time
+    /// the first fetch fails with "operator not connected", the id survives only
+    /// in the recovery store, and the iPhone card never appears. On (re)connect we
+    /// retry the fetch and surface the card so a time-boxed challenge is not lost.
     func recoverPendingExecApprovalPromptsOnConnect() async {
         guard self.operatorConnected, self.pendingExecApprovalPrompt == nil else { return }
         let approvalIDs = await self.pendingExecApprovalIDsForWatchRecovery()
