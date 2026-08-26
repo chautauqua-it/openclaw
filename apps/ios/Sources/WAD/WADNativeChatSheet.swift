@@ -228,7 +228,7 @@ private actor IanuaChatAPI {
     /// revocabile persistente a TTL lungo (cookie con Max-Age) → niente
     /// ri-login a ogni apertura.
     func login(email: String, password: String, userId: Int? = nil) async throws -> IanuaLoginResult {
-        var json: [String: Any] = ["email": email, "password": password, "client": "ios", "deviceName": Self.deviceName]
+        var json: [String: Any] = ["email": email, "password": password, "client": "ios", "deviceName": await Self.deviceName()]
         if let userId { json["userId"] = userId }
         let data = try await self.call("/api/login", method: "POST", json: json)
         struct Payload: Decodable {
@@ -255,13 +255,14 @@ private actor IanuaChatAPI {
         IanuaSessionStore.clear()
     }
 
-    private static let deviceName: String = {
+    @MainActor
+    private static func deviceName() -> String {
         #if canImport(UIKit)
         return UIDevice.current.name
         #else
         return "iOS"
         #endif
-    }()
+    }
 
     func channels() async throws -> IanuaChannelPayload {
         try await self.decoder.decode(IanuaChannelPayload.self, from: self.call("/api/op/channels"))
