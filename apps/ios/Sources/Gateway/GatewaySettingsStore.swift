@@ -557,4 +557,20 @@ enum GatewayDiagnostics {
             try? FileManager.default.removeItem(at: url)
         }
     }
+
+    static func recentLogText(maxBytes: Int = 96 * 1024) -> String {
+        guard let url = fileURL,
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return "" }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > UInt64(maxBytes) ? size - UInt64(maxBytes) : 0
+        try? handle.seek(toOffset: start)
+        let data = (try? handle.readToEnd()) ?? Data()
+        var text = String(data: data, encoding: .utf8) ?? ""
+        if start > 0, let nl = text.firstIndex(of: "\n") {
+            text = String(text[text.index(after: nl)...])
+        }
+        return text
+    }
 }

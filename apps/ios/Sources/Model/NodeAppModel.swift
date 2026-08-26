@@ -3379,10 +3379,14 @@ extension NodeAppModel {
     }
 
     private func registerAPNsTokenIfNeeded() async {
-        guard self.gatewayConnected else { return }
+        guard self.gatewayConnected else {
+            GatewayDiagnostics.log("push: register skipped reason=gateway_not_connected")
+            return
+        }
         guard let token = self.apnsDeviceTokenHex?.trimmingCharacters(in: .whitespacesAndNewlines),
               !token.isEmpty
         else {
+            GatewayDiagnostics.log("push: register skipped reason=no_apns_token")
             return
         }
         let usesRelayTransport = await self.pushRegistrationManager.usesRelayTransport
@@ -3409,9 +3413,12 @@ extension NodeAppModel {
                 gatewayIdentity: gatewayIdentity)
             await self.nodeGateway.sendEvent(event: "push.apns.register", payloadJSON: payloadJSON)
             self.apnsLastRegisteredTokenHex = token
+            GatewayDiagnostics.log(
+                "push: register published transport=\(usesRelayTransport ? "relay" : "direct") topic=\(topic)")
         } catch {
             self.pushWakeLogger.error(
                 "APNs registration publish failed: \(error.localizedDescription, privacy: .public)")
+            GatewayDiagnostics.log("push: register publish FAILED error=\(error.localizedDescription)")
         }
     }
 

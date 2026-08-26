@@ -113,6 +113,8 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let tokenSuffix = deviceToken.suffix(4).map { String(format: "%02x", $0) }.joined()
+        GatewayDiagnostics.log("push: APNs token registered bytes=\(deviceToken.count) suffix=\(tokenSuffix)")
         if let appModel = self.resolvedAppModel() {
             Task { @MainActor in
                 appModel.updateAPNsDeviceToken(deviceToken)
@@ -125,6 +127,7 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error) {
         self.logger.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
+        GatewayDiagnostics.log("push: APNs registration FAILED error=\(error.localizedDescription)")
     }
 
     func application(
@@ -133,6 +136,7 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void)
     {
         self.logger.info("APNs remote notification received keys=\(userInfo.keys.count, privacy: .public)")
+        GatewayDiagnostics.log("push: remote notification received keys=\(userInfo.keys.count)")
         Task { @MainActor in
             let notificationCenter = LiveNotificationCenter()
             if await ExecApprovalNotificationBridge.handleResolvedPushIfNeeded(
