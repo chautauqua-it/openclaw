@@ -2149,6 +2149,7 @@ extension NodeAppModel {
                             await self.refreshShareRouteFromGateway()
                             await self.registerAPNsTokenIfNeeded()
                             await self.startVoiceWakeSync()
+                            await self.recoverPendingExecApprovalPromptsOnConnect()
                             await MainActor.run { LiveActivityManager.shared.handleReconnect() }
                             await MainActor.run { self.startGatewayHealthMonitor() }
                         },
@@ -3231,6 +3232,44 @@ extension NodeAppModel {
                     "watch approval push fetch failed id=\(normalizedApprovalID, privacy: .public)")
             self.watchExecApprovalLogger.error("watch approval push fetch error=\(message, privacy: .public)")
             return false
+        }
+    }
+
+    // A push-delivered exec-approval carries only the approvalId; the app then
+    // fetches the challenge and presents the native card. That fetch needs a
+    // connected operator socket, so when the connection is flapping at wake time
+    // the first fetch fails with "operator not connected", the id survives only
+    // in the recovery store, and the iPhone card never appears. On (re)connect we
+    // retry the fetch and surface the card so a time-boxed challenge is not lost.
+    func recoverPendingExecApprovalPromptsOnConnect() async {
+        guard self.operatorConnected, self.pendingExecApprovalPrompt == nil else { return }
+        let approvalIDs = await self.pendingExecApprovalIDsForWatchRecovery()
+        guard !approvalIDs.isEmpty else { return }
+        GatewayDiagnostics.log(
+            "exec approval: reconnect recovery start ids=\(approvalIDs.joined(separator: ","))")
+        for approvalId in approvalIDs {
+            let normalizedID = approvalId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedID.isEmpty else { continue }
+            guard self.pendingExecApprovalPrompt == nil else { return }
+            let outcome = await self.fetchExecApprovalPrompt(
+                approvalId: normalizedID,
+                sourceReason: "operator_reconnect")
+            switch outcome {
+            case let .loaded(prompt):
+                self.presentFetchedExecApprovalPrompt(prompt)
+                self.upsertWatchExecApprovalPrompt(prompt)
+                await self.publishWatchExecApprovalPrompt(prompt, reason: "operator_reconnect")
+                GatewayDiagnostics.log(
+                    "exec approval: reconnect recovery presented id=\(normalizedID)")
+            case .stale:
+                self.removePendingWatchExecApprovalRecoveryID(normalizedID)
+                await ExecApprovalNotificationBridge.removeNotifications(
+                    forApprovalID: normalizedID,
+                    notificationCenter: self.notificationCenter)
+                self.clearPendingExecApprovalPromptIfMatches(normalizedID)
+            case .failed:
+                continue
+            }
         }
     }
 
