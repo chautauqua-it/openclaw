@@ -331,7 +331,8 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void)
     {
         let userInfo = notification.request.content.userInfo
-        if Self.isWatchPromptNotification(userInfo)
+        if userInfo[PushDebugView.localDebugKey] as? Bool == true
+            || Self.isWatchPromptNotification(userInfo)
             || ExecApprovalNotificationBridge.shouldPresentNotification(userInfo: userInfo)
         {
             completionHandler([.banner, .list, .sound])

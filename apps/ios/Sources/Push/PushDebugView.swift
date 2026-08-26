@@ -15,6 +15,11 @@ struct PushDebugView: View {
     private let deviceTokenKey = "push.apns.deviceTokenHex"
     private let notificationCenter: NotificationCentering = LiveNotificationCenter()
 
+    /// Marca la notifica di prova locale così che il delegate la mostri anche in
+    /// foreground: senza questo, `willPresent` la sopprime e il test sembra
+    /// fallito pur essendo stato consegnato.
+    static let localDebugKey = "ianua.push.debug.local"
+
     var body: some View {
         List {
             Section("Stato") {
@@ -151,6 +156,7 @@ struct PushDebugView: View {
         content.title = "Iànua — notifica di prova"
         content.body = "Se vedi questo banner, le notifiche funzionano. \(Self.timestamp())"
         content.sound = .default
+        content.userInfo = [Self.localDebugKey: true]
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3, repeats: false)
         let request = UNNotificationRequest(
@@ -161,7 +167,7 @@ struct PushDebugView: View {
         do {
             try await self.notificationCenter.add(request)
             GatewayDiagnostics.log("push: local test scheduled (3s)")
-            self.lastResult = "Notifica di prova pianificata: arriva tra ~3s (metti l'app in background per vedere il banner)."
+            self.lastResult = "Notifica di prova pianificata: arriva tra ~3s (banner visibile anche con l'app aperta)."
         } catch {
             GatewayDiagnostics.log("push: local test FAILED error=\(error.localizedDescription)")
             self.lastResult = "Errore invio prova: \(error.localizedDescription)"
