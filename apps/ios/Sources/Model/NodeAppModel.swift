@@ -3543,12 +3543,20 @@ extension NodeAppModel {
         let approvalId = prompt.approvalId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !approvalId.isEmpty else { return }
 
+        // A notification tap is a distinct path from the silent-push handler.
+        // Persist the ID before attempting the fetch so a socket that is still
+        // reconnecting cannot make the approval disappear permanently. The
+        // reconnect hook will retry this same ID until it loads or goes stale.
+        self.appendPendingWatchExecApprovalRecoveryID(approvalId)
+
         self.pendingExecApprovalPromptRequestGeneration &+= 1
         let requestGeneration = self.pendingExecApprovalPromptRequestGeneration
         self.pendingExecApprovalPromptResolving = true
         self.pendingExecApprovalPromptErrorText = nil
 
-        let fetchedPrompt = await self.fetchExecApprovalPrompt(approvalId: approvalId)
+        let fetchedPrompt = await self.fetchExecApprovalPrompt(
+            approvalId: approvalId,
+            sourceReason: "notification_action")
         guard self.pendingExecApprovalPromptRequestGeneration == requestGeneration else {
             return
         }

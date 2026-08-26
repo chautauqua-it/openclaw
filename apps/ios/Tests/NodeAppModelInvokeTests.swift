@@ -398,6 +398,11 @@ private final class MockBootstrapNotificationCenter: NotificationCentering, @unc
                 isBackgrounded: true)
         )
         #expect(
+            NodeAppModel._test_shouldUseBackgroundAwareExecApprovalReconnect(
+                sourceReason: "notification_action",
+                isBackgrounded: true)
+        )
+        #expect(
             !NodeAppModel._test_shouldUseBackgroundAwareExecApprovalReconnect(
                 sourceReason: "direct",
                 isBackgrounded: true)
