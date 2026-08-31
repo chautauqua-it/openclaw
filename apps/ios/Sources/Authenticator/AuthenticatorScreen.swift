@@ -21,12 +21,10 @@ enum AuthenticatorScreenPendingState: Equatable {
 /// number matching pendente anche se la card automatica è stata chiusa o
 /// non è mai apparsa (app riaperta, push perso, reconnect).
 struct AuthenticatorScreen: View {
-    @Environment(NodeAppModel.self) private var appModel: NodeAppModel
-
-    @State private var identity: AuthenticatorStore.Identity?
-    @State private var identityErrorText: String?
+    @State private var model = IanuaAuthenticatorModel.shared
     @State private var isSearching = false
     @State private var searchOutcomeText: String?
+    @State private var enrollmentCode = ""
 
     var body: some View {
         List {
@@ -38,14 +36,14 @@ struct AuthenticatorScreen: View {
             }
         }
         .navigationTitle("Authenticator")
-        .task { await self.loadIdentity() }
+        .task { await self.model.bootstrap() }
     }
 
     private var pendingState: AuthenticatorScreenPendingState {
         .resolve(
-            challenge: self.appModel.pendingExecApprovalPrompt?.authenticator,
-            hasPrompt: self.appModel.pendingExecApprovalPrompt != nil,
-            operatorConnected: self.appModel.isOperatorConnected)
+            challenge: self.model.pendingChallenge,
+            hasPrompt: false,
+            operatorConnected: self.model.identity != nil)
     }
 
     @ViewBuilder
@@ -54,23 +52,19 @@ struct AuthenticatorScreen: View {
         case let .challenge(challenge):
             AuthenticatorApprovalView(
                 challenge: challenge,
-                isResolving: self.appModel.pendingExecApprovalPromptResolving,
-                errorText: self.appModel.pendingExecApprovalPromptErrorText,
+                isResolving: self.model.isResolving,
+                errorText: self.model.errorText,
                 onApprove: { code in
                     Task {
-                        await self.appModel.resolvePendingAuthenticatorPrompt(
-                            decision: "approve",
-                            enteredCode: code)
+                        await self.model.resolve(decision: "approve", enteredCode: code)
                     }
                 },
                 onDeny: { code in
                     Task {
-                        await self.appModel.resolvePendingAuthenticatorPrompt(
-                            decision: "deny",
-                            enteredCode: code)
+                        await self.model.resolve(decision: "deny", enteredCode: code)
                     }
                 },
-                onCancel: { self.appModel.dismissPendingExecApprovalPrompt() })
+                onCancel: { self.model.pendingChallenge = nil })
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
         case .foreignPrompt:
@@ -109,7 +103,7 @@ struct AuthenticatorScreen: View {
 
     @ViewBuilder
     private var identitySection: some View {
-        if let identity {
+        if let identity = self.model.identity {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Person ID")
                     .font(.caption)
@@ -127,8 +121,34 @@ struct AuthenticatorScreen: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             #endif
-        } else if let identityErrorText {
-            Text(identityErrorText)
+            if self.model.enrollmentRequired {
+                SecureField("Codice TOTP a 6 cifre", text: self.$enrollmentCode)
+                    .keyboardType(.numberPad)
+                Button {
+                    Task {
+                        await self.model.enroll(totpCode: self.enrollmentCode)
+                        if !self.model.enrollmentRequired { self.enrollmentCode = "" }
+                    }
+                } label: {
+                    if self.model.isEnrolling {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Attivazione…")
+                        }
+                    } else {
+                        Text("Attiva questo iPhone")
+                    }
+                }
+                .disabled(
+                    self.model.isEnrolling ||
+                        self.enrollmentCode.count != 6 ||
+                        !self.enrollmentCode.allSatisfy(\.isNumber))
+                Text("Il primo enrollment richiede un TOTP fresco; la chiave privata resta nella Secure Enclave.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let errorText = self.model.errorText {
+            Text(errorText)
                 .font(.footnote)
                 .foregroundStyle(.red)
         } else {
@@ -141,22 +161,17 @@ struct AuthenticatorScreen: View {
         }
     }
 
-    private func loadIdentity() async {
-        do {
-            self.identity = try await AuthenticatorStore.shared.identity()
-            self.identityErrorText = nil
-        } catch {
-            self.identityErrorText = error.localizedDescription
-        }
-    }
-
     private func searchPending() async {
         self.isSearching = true
         self.searchOutcomeText = nil
-        await self.appModel.recoverPendingExecApprovalPromptsOnConnect()
+        do {
+            try await self.model.refreshPending()
+        } catch {
+            self.model.errorText = error.localizedDescription
+        }
         self.isSearching = false
-        if self.appModel.pendingExecApprovalPrompt == nil {
-            self.searchOutcomeText = "Nessuna richiesta in sospeso trovata sul gateway."
+        if self.model.pendingChallenge == nil {
+            self.searchOutcomeText = "Nessuna richiesta in sospeso trovata su Iànua."
         }
     }
 }

@@ -57,6 +57,7 @@ struct SettingsTab: View {
     @State private var showGatewayProblemDetails: Bool = false
     @State private var activeFeatureHelp: FeatureHelp?
     @State private var suppressCredentialPersist: Bool = false
+    @State private var authenticatorModel = IanuaAuthenticatorModel.shared
 
     private let gatewayLogger = Logger(subsystem: "ai.openclaw.ios", category: "GatewaySettings")
 
@@ -271,18 +272,20 @@ struct SettingsTab: View {
                 Section {
                     NavigationLink {
                         AuthenticatorScreen()
-                            .environment(self.appModel)
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "lock.shield.fill")
                             Text("Authenticator")
                             Spacer()
-                            if self.appModel.pendingExecApprovalPrompt?.authenticator != nil {
+                            if self.authenticatorModel.pendingChallenge != nil {
                                 Text("1 in attesa")
                                     .font(.footnote)
                                     .foregroundStyle(.orange)
                             }
                         }
+                    }
+                    .task {
+                        await self.authenticatorModel.bootstrap()
                     }
                 }
 

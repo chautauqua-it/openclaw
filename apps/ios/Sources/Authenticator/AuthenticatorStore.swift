@@ -33,6 +33,7 @@ struct AuthenticatorActionContext: Codable, Equatable {
 }
 
 struct AuthenticatorChallenge: Codable, Equatable {
+    let id: String?
     let personId: String
     let initiatorDeviceId: String
     let nonce: String
@@ -41,6 +42,28 @@ struct AuthenticatorChallenge: Codable, Equatable {
     let parameterSummary: String
     let matchCodeDigits: Int
     let expiresAtUnix: Int64
+
+    init(
+        id: String? = nil,
+        personId: String,
+        initiatorDeviceId: String,
+        nonce: String,
+        action: AuthenticatorActionContext,
+        target: String,
+        parameterSummary: String,
+        matchCodeDigits: Int,
+        expiresAtUnix: Int64)
+    {
+        self.id = id
+        self.personId = personId
+        self.initiatorDeviceId = initiatorDeviceId
+        self.nonce = nonce
+        self.action = action
+        self.target = target
+        self.parameterSummary = parameterSummary
+        self.matchCodeDigits = matchCodeDigits
+        self.expiresAtUnix = expiresAtUnix
+    }
 
     func validationError(now: Date = Date()) -> String? {
         let strings = [self.personId, self.initiatorDeviceId, self.target, self.parameterSummary]

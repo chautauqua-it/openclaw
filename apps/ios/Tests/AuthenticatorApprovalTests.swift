@@ -92,6 +92,36 @@ struct AuthenticatorApprovalTests {
         #expect(object["decision"] == "approve")
     }
 
+    @Test func `decodes Iànua pending challenge envelope`() throws {
+        let request: [String: Any] = [
+            "personId": String(repeating: "a", count: 64),
+            "initiatorDeviceId": String(repeating: "b", count: 64),
+            "nonce": Data(repeating: 7, count: 32).base64EncodedString(),
+            "action": [
+                "environment": "production",
+                "tenant": "restart",
+                "audience": "ianua-critical-config",
+                "actionId": "network.vlan.apply",
+                "requestHash": String(repeating: "ab", count: 32),
+            ],
+            "target": "cluster-management",
+            "parameterSummary": "Applica VLAN management",
+            "matchCodeDigits": 2,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: [
+            "challenges": [[
+                "id": "7f6177dc-f5dc-4104-b411-3d2f91b00d41",
+                "request": request,
+                "expiresAt": "2100-01-01T00:00:00.000Z",
+            ]],
+        ])
+        let challenges = try IanuaAuthenticatorClient.decodePending(data)
+        let challenge = try #require(challenges.first)
+        #expect(challenge.id == "7f6177dc-f5dc-4104-b411-3d2f91b00d41")
+        #expect(challenge.action.actionId == "network.vlan.apply")
+        #expect(challenge.validationError(now: Date(timeIntervalSince1970: 2_000_000_000)) == nil)
+    }
+
     @Test func `screen shows pending challenge outside chat`() {
         let challenge = self.challenge()
         #expect(AuthenticatorScreenPendingState.resolve(
