@@ -134,6 +134,8 @@ actor IanuaAuthenticatorClient {
             return data
         } catch let error as WADAPIError {
             throw error
+        } catch let error as IanuaAuthenticatorError {
+            throw error
         } catch {
             throw WADAPIError.unreachable
         }
