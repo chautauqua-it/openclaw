@@ -220,6 +220,33 @@ def asc_auth_export_xcargs(api_key)
   ])
 end
 
+# Sources/Info.plist è rigenerato da XcodeGen a partire da project.yml: una chiave
+# committata solo nel plist sparisce silenziosamente dall'archive (successo: build 85/86,
+# NSFaceIDUsageDescription assente → crash immediato alla evaluatePolicy biometrica).
+# L'unica prova di cosa arriva sul telefono è l'Info.plist dentro l'archive: verificarlo
+# qui blocca l'upload di una build rotta.
+REQUIRED_ARCHIVE_PLIST_KEYS = %w[
+  NSFaceIDUsageDescription
+  NSMicrophoneUsageDescription
+].freeze
+
+def verify_archive_privacy_keys(archive_path)
+  app_plist = Dir[File.join(archive_path, "Products", "Applications", "*.app", "Info.plist")].first
+  UI.user_error!("Archive verification failed: no app Info.plist under #{archive_path}") unless app_plist
+
+  missing = REQUIRED_ARCHIVE_PLIST_KEYS.reject do |key|
+    system("/usr/libexec/PlistBuddy", "-c", "Print :#{key}", app_plist, out: File::NULL, err: File::NULL)
+  end
+  unless missing.empty?
+    UI.user_error!(
+      "Archive Info.plist missing required keys: #{missing.join(', ')}. " \
+      "Add them to project.yml (targets info.properties) — editing Sources/Info.plist " \
+      "directly is overwritten by XcodeGen. Upload blocked."
+    )
+  end
+  UI.success("Archive Info.plist verified: #{REQUIRED_ARCHIVE_PLIST_KEYS.join(', ')} present")
+end
+
 def build_beta_release(context)
   version = context[:version]
   output_directory = File.join("build", "beta")
@@ -248,6 +275,8 @@ def build_beta_release(context)
       signingStyle: "automatic"
     }
   )
+
+  verify_archive_privacy_keys(archive_path)
 
   {
     archive_path: archive_path,
