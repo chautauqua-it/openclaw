@@ -55,7 +55,7 @@
 	<key>NSContactsUsageDescription</key>
 	<string>OpenClaw usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Iànua usa Face ID per confermare l'approvazione delle azioni critiche con l'Authenticator.</string>
+	<string>Ianua usa Face ID per firmare le approvazioni di sicurezza con la chiave protetta di questo iPhone.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OpenClaw discovers and connects to your OpenClaw gateway on the local network.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -91,10 +91,10 @@
 			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
 			<array>
 				<dict>
-					<key>UISceneConfigurationName</key>
-					<string>WADCarPlay</string>
 					<key>UISceneClassName</key>
 					<string>CPTemplateApplicationScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>WADCarPlay</string>
 					<key>UISceneDelegateClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).WADCarPlaySceneDelegate</string>
 				</dict>
