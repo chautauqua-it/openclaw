@@ -190,7 +190,7 @@ private enum WADSiriAskRunner {
         do {
             _ = try await api.me()
         } catch {
-            return "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login."
+            return "Non sei collegato a Iànua. Apri l'app, controlla la connessione Internet e fai il login."
         }
 
         guard let resolved = await WADSiriChannels.resolve(api: api, target: target) else {
@@ -258,7 +258,7 @@ private enum WADSiriReadRunner {
         do {
             _ = try await api.me()
         } catch {
-            return "Non sei collegato a WAD. Apri l'app, controlla Tailscale e fai il login."
+            return "Non sei collegato a Iànua. Apri l'app, controlla la connessione Internet e fai il login."
         }
 
         guard let resolved = await WADSiriChannels.resolve(api: api, target: target) else {
@@ -266,7 +266,7 @@ private enum WADSiriReadRunner {
         }
 
         guard let snapshot = try? await api.messages(channelId: resolved.channelId) else {
-            return "Non riesco a leggere i messaggi di \(resolved.title). Controlla Tailscale e riprova."
+            return "Non riesco a leggere i messaggi di \(resolved.title). Controlla la connessione Internet e riprova."
         }
 
         guard let latest = snapshot.messages.last(where: { !$0.body.isEmpty }) else {

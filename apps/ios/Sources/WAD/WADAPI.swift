@@ -10,7 +10,7 @@ enum WADAPIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreachable:
-            "WAD non raggiungibile. Controlla Tailscale."
+            "Iànua non raggiungibile. Controlla la connessione Internet e riprova."
         case .unauthorized:
             "Sessione scaduta. Esegui di nuovo il login."
         case let .server(message):
@@ -22,6 +22,30 @@ enum WADAPIError: LocalizedError {
 }
 
 typealias WADJSON = [String: Any]
+
+enum IanuaPublicEndpointPolicy {
+    static let canonicalBaseURL = "https://ianua.differen.it"
+
+    static func normalizedBaseURL(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed) else { return nil }
+        guard components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "ianua.differen.it",
+              components.port == nil,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.path.isEmpty || components.path == "/"
+        else { return nil }
+        return Self.canonicalBaseURL
+    }
+
+    static func resolvedBaseURL(_ persistedValue: String?) -> String {
+        self.normalizedBaseURL(persistedValue) ?? self.canonicalBaseURL
+    }
+}
 
 struct WADRequestOptions: @unchecked Sendable {
     let method: String
@@ -50,7 +74,6 @@ struct WADRequestOptions: @unchecked Sendable {
 
 actor WADAPIClient {
     static let shared = WADAPIClient()
-    static let fallbackBaseURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:8456"
 
     private let decoder: JSONDecoder
 
@@ -60,14 +83,19 @@ actor WADAPIClient {
     }
 
     nonisolated var baseURL: String {
-        UserDefaults.standard.string(forKey: "wad.native.baseURL") ?? Self.fallbackBaseURL
+        IanuaPublicEndpointPolicy.resolvedBaseURL(
+            UserDefaults.standard.string(forKey: "wad.native.baseURL"))
     }
 
     nonisolated func setBaseURL(_ url: String) {
-        let trimmed = url
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        UserDefaults.standard.set(trimmed, forKey: "wad.native.baseURL")
+        if let normalized = IanuaPublicEndpointPolicy.normalizedBaseURL(url) {
+            UserDefaults.standard.set(normalized, forKey: "wad.native.baseURL")
+        } else {
+            // Migrazione fail-closed: le build precedenti potevano conservare
+            // un host tailnet. Un valore non pubblico/non HTTPS non deve mai
+            // diventare il percorso ordinario della nuova app Iànua.
+            UserDefaults.standard.removeObject(forKey: "wad.native.baseURL")
+        }
     }
 
     private func makeURL(_ path: String) throws -> URL {

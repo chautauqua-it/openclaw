@@ -153,8 +153,9 @@ targets:
           - ai.openclaw.ios.bgrefresh
         NSLocalNetworkUsageDescription: OpenClaw discovers and connects to your OpenClaw gateway on the local network.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-          NSAllowsArbitraryLoadsInWebContent: true
+          # Il traffico Internet ordinario deve rispettare ATS/HTTPS. Questa
+          # eccezione resta solo per discovery e sviluppo su rete locale.
+          NSAllowsLocalNetworking: true
         NSBonjourServices:
           - _openclaw-gw._tcp
         NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
