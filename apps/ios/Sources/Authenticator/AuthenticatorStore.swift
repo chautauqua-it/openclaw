@@ -215,9 +215,11 @@ actor AuthenticatorStore {
             if let secureKey = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: stored) {
                 return .secureEnclave(secureKey)
             }
+            #if targetEnvironment(simulator)
             if let softwareKey = try? P256.Signing.PrivateKey(rawRepresentation: stored) {
                 return .keychain(softwareKey)
             }
+            #endif
             throw AuthenticatorError.keyUnavailable
         }
 

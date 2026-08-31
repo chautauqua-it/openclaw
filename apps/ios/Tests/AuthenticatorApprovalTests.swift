@@ -4,6 +4,27 @@ import Testing
 @testable import OpenClaw
 
 struct AuthenticatorApprovalTests {
+    @Test func productionSourceDoesNotLoadSoftwareAuthenticatorKeys() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/Authenticator/AuthenticatorStore.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let softwareLoad = "P256.Signing.PrivateKey(rawRepresentation: stored)"
+        let simulatorGuard = "#if targetEnvironment(simulator)"
+
+        guard let softwareRange = source.range(of: softwareLoad) else {
+            Issue.record("Software-key compatibility loader is missing")
+            return
+        }
+        let guardedPrefix = source[..<softwareRange.lowerBound]
+        guard let guardRange = guardedPrefix.range(of: simulatorGuard, options: .backwards) else {
+            Issue.record("Software Authenticator keys must be simulator-only")
+            return
+        }
+        #expect(!guardedPrefix[guardRange.upperBound...].contains("#endif"))
+    }
+
     private func challenge(
         personId: String = String(repeating: "a", count: 64),
         initiatorDeviceId: String = String(repeating: "b", count: 64),
