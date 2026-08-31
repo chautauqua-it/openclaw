@@ -190,7 +190,11 @@ final class NodeAppModel {
 
     private var gatewayConnected = false
     private var operatorConnected = false
-    var isOperatorConnected: Bool { self.operatorConnected }
+
+    var isOperatorConnected: Bool {
+        self.operatorConnected
+    }
+
     private var shareDeliveryChannel: String?
     private var shareDeliveryTo: String?
     private var apnsDeviceTokenHex: String?

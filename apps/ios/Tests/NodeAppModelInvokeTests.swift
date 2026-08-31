@@ -77,6 +77,22 @@ private final class MockWatchMessagingService: @preconcurrency WatchMessagingSer
         self.execApprovalSnapshotRequestHandler = handler
     }
 
+    func setTalkUtteranceHandler(_ handler: (@Sendable (WatchTalkUtteranceEvent) -> Void)?) {}
+
+    func setTalkAudioHandler(_ handler: (@Sendable (WatchTalkAudioEvent) -> Void)?) {}
+
+    func sendTalkState(
+        _ message: OpenClawWatchTalkStateMessage) async throws -> WatchNotificationSendResult
+    {
+        self.nextSendResult
+    }
+
+    func sendTalkReply(
+        _ message: OpenClawWatchTalkReplyMessage) async throws -> WatchNotificationSendResult
+    {
+        self.nextSendResult
+    }
+
     func sendNotification(id: String, params: OpenClawWatchNotifyParams) async throws -> WatchNotificationSendResult {
         self.lastSent = (id: id, params: params)
         if let sendError = self.sendError {
