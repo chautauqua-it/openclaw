@@ -92,6 +92,33 @@ struct AuthenticatorApprovalTests {
         #expect(object["decision"] == "approve")
     }
 
+    @Test func `screen shows pending challenge outside chat`() {
+        let challenge = self.challenge()
+        #expect(AuthenticatorScreenPendingState.resolve(
+            challenge: challenge,
+            hasPrompt: true,
+            operatorConnected: true) == .challenge(challenge))
+        #expect(AuthenticatorScreenPendingState.resolve(
+            challenge: challenge,
+            hasPrompt: true,
+            operatorConnected: false) == .challenge(challenge))
+    }
+
+    @Test func `screen separates foreign prompts from searchable idle`() {
+        #expect(AuthenticatorScreenPendingState.resolve(
+            challenge: nil,
+            hasPrompt: true,
+            operatorConnected: true) == .foreignPrompt)
+        #expect(AuthenticatorScreenPendingState.resolve(
+            challenge: nil,
+            hasPrompt: false,
+            operatorConnected: true) == .idle(canSearch: true))
+        #expect(AuthenticatorScreenPendingState.resolve(
+            challenge: nil,
+            hasPrompt: false,
+            operatorConnected: false) == .idle(canSearch: false))
+    }
+
     @Test func `ui state requires exact numeric match code`() {
         let challenge = self.challenge()
         #expect(AuthenticatorUIState.resolve(challenge: challenge, code: "4", resolving: false) != .ready)

@@ -268,6 +268,24 @@ struct SettingsTab: View {
                     }
                 }
 
+                Section {
+                    NavigationLink {
+                        AuthenticatorScreen()
+                            .environment(self.appModel)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "lock.shield.fill")
+                            Text("Authenticator")
+                            Spacer()
+                            if self.appModel.pendingExecApprovalPrompt?.authenticator != nil {
+                                Text("1 in attesa")
+                                    .font(.footnote)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+
                 Section("Device") {
                     DisclosureGroup("Features") {
                         self.featureToggle(
