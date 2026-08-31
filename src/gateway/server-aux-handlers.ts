@@ -17,6 +17,7 @@ import {
   type ChannelKind,
   type GatewayReloadPlan,
 } from "./config-reload.js";
+import { ExecApprovalAuthenticatorStateStore } from "./exec-approval-authenticator-state.js";
 import { createExecApprovalIosPushDelivery } from "./exec-approval-ios-push.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { createExecApprovalHandlers } from "./server-methods/exec-approval.js";
@@ -52,11 +53,26 @@ export function createGatewayAuxHandlers(params: {
   logChannels: { info: (msg: string) => void };
 }) {
   const execApprovalManager = new ExecApprovalManager();
+  const authenticatorStateStore = new ExecApprovalAuthenticatorStateStore();
+  const restoredAuthenticatorCodeHashes = new Map<string, string>();
+  for (const entry of authenticatorStateStore.load()) {
+    try {
+      execApprovalManager.register(entry.record, entry.record.expiresAtMs - Date.now());
+      restoredAuthenticatorCodeHashes.set(entry.record.id, entry.matchCodeHash);
+    } catch (err) {
+      params.log.warn?.(
+        `authenticator state restore failed for ${entry.record.id}: ${String(err)}`,
+      );
+      authenticatorStateStore.delete(entry.record.id);
+    }
+  }
   const execApprovalForwarder = createExecApprovalForwarder();
   const execApprovalIosPushDelivery = createExecApprovalIosPushDelivery({ log: params.log });
   const execApprovalHandlers = createExecApprovalHandlers(execApprovalManager, {
     forwarder: execApprovalForwarder,
     iosPushDelivery: execApprovalIosPushDelivery,
+    authenticatorStateStore,
+    restoredAuthenticatorCodeHashes,
   });
   const buildReloadPlan = params.buildReloadPlan ?? buildGatewayReloadPlan;
   const pluginApprovalManager = new ExecApprovalManager<PluginApprovalRequestPayload>();

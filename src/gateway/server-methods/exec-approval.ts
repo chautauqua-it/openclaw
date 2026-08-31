@@ -18,6 +18,7 @@ import {
 } from "../../infra/system-run-approval-binding.js";
 import { resolveSystemRunApprovalRequestContext } from "../../infra/system-run-approval-context.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import type { ExecApprovalAuthenticatorStateStore } from "../exec-approval-authenticator-state.js";
 import {
   ExecApprovalAuthenticatorFatigueGuard,
   publicAuthenticatorRequest,
@@ -57,12 +58,17 @@ type ExecApprovalIosPushDelivery = {
 
 export function createExecApprovalHandlers(
   manager: ExecApprovalManager,
-  opts?: { forwarder?: ExecApprovalForwarder; iosPushDelivery?: ExecApprovalIosPushDelivery },
+  opts?: {
+    forwarder?: ExecApprovalForwarder;
+    iosPushDelivery?: ExecApprovalIosPushDelivery;
+    authenticatorStateStore?: ExecApprovalAuthenticatorStateStore;
+    restoredAuthenticatorCodeHashes?: ReadonlyMap<string, string>;
+  },
 ): GatewayRequestHandlers {
   // Number-matching verifiers are deliberately kept out of request records,
   // broadcasts, list/get responses and push payloads. A short-code hash is
   // brute-forceable and therefore must be treated like the code itself.
-  const authenticatorCodeHashes = new Map<string, string>();
+  const authenticatorCodeHashes = new Map(opts?.restoredAuthenticatorCodeHashes);
   const authenticatorFatigueGuard = new ExecApprovalAuthenticatorFatigueGuard();
   return {
     "exec.approval.get": async ({ params, respond }) => {
@@ -291,9 +297,6 @@ export function createExecApprovalHandlers(
         authenticator: p.authenticator ? publicAuthenticatorRequest(p.authenticator) : undefined,
       };
       const record = manager.create(request, timeoutMs, explicitId);
-      if (p.authenticator) {
-        authenticatorCodeHashes.set(record.id, p.authenticator.matchCodeHash);
-      }
       record.requestedByConnId = client?.connId ?? null;
       record.requestedByDeviceId = client?.connect?.device?.id ?? null;
       record.requestedByClientId = client?.connect?.client?.id ?? null;
@@ -311,6 +314,27 @@ export function createExecApprovalHandlers(
           errorShape(ErrorCodes.INVALID_REQUEST, `registration failed: ${String(err)}`),
         );
         return;
+      }
+      if (p.authenticator) {
+        authenticatorCodeHashes.set(record.id, p.authenticator.matchCodeHash);
+        try {
+          opts?.authenticatorStateStore?.put({
+            record,
+            matchCodeHash: p.authenticator.matchCodeHash,
+          });
+        } catch (err) {
+          manager.expire(record.id, "authenticator-state-persist-failed");
+          authenticatorCodeHashes.delete(record.id);
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              `authenticator state persistence failed: ${String(err)}`,
+            ),
+          );
+          return;
+        }
       }
       const requestEvent: ExecApprovalRequest = {
         id: record.id,
@@ -363,6 +387,7 @@ export function createExecApprovalHandlers(
         },
         afterDecision: async (decision) => {
           authenticatorCodeHashes.delete(record.id);
+          opts?.authenticatorStateStore?.delete(record.id);
           if (decision === null) {
             await opts?.iosPushDelivery?.handleExpired?.(requestEvent);
           }
@@ -500,6 +525,14 @@ export function createExecApprovalHandlers(
             ]
           : undefined,
       });
+      if (
+        authenticatorRequest &&
+        pendingLookup.ok &&
+        manager.getSnapshot(pendingLookup.approvalId)?.resolvedAtMs !== undefined
+      ) {
+        authenticatorCodeHashes.delete(pendingLookup.approvalId);
+        opts?.authenticatorStateStore?.delete(pendingLookup.approvalId);
+      }
     },
   };
 }
