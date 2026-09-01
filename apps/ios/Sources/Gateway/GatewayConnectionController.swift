@@ -168,6 +168,34 @@ final class GatewayConnectionController {
         let token = GatewaySettingsStore.loadGatewayToken(instanceId: instanceId)
         let bootstrapToken = GatewaySettingsStore.loadGatewayBootstrapToken(instanceId: instanceId)
         let password = GatewaySettingsStore.loadGatewayPassword(instanceId: instanceId)
+
+        if Self.isPublicGatewayHost(host) {
+            // Public gateway: Let's Encrypt certs rotate, so leaf TOFU pinning
+            // would break at every renewal. System CA trust, TLS always on.
+            let publicPort = port > 0 ? port : 443
+            let stableID = self.manualStableID(host: host, port: publicPort)
+            guard let url = self.buildGatewayURL(
+                host: host,
+                port: publicPort,
+                useTLS: true,
+                path: Self.storedPublicGatewayPath())
+            else { return }
+            GatewaySettingsStore.saveLastGatewayConnectionManual(
+                host: host,
+                port: publicPort,
+                useTLS: true,
+                stableID: stableID)
+            self.didAutoConnect = true
+            self.startAutoConnect(
+                url: url,
+                gatewayStableID: stableID,
+                tls: Self.publicGatewayTLSParams(),
+                token: token,
+                bootstrapToken: bootstrapToken,
+                password: password)
+            return
+        }
+
         let resolvedUseTLS = self.resolveManualUseTLS(host: host, useTLS: useTLS)
         guard let resolvedPort = self.resolveManualPort(host: host, port: port, useTLS: resolvedUseTLS)
         else { return }
@@ -342,6 +370,28 @@ final class GatewayConnectionController {
 
             let manualPort = defaults.integer(forKey: "gateway.manual.port")
             let manualTLS = defaults.bool(forKey: "gateway.manual.tls")
+
+            if Self.isPublicGatewayHost(manualHost) {
+                let publicPort = manualPort > 0 ? manualPort : 443
+                let stableID = self.manualStableID(host: manualHost, port: publicPort)
+                guard let url = self.buildGatewayURL(
+                    host: manualHost,
+                    port: publicPort,
+                    useTLS: true,
+                    path: Self.storedPublicGatewayPath())
+                else { return }
+
+                self.didAutoConnect = true
+                self.startAutoConnect(
+                    url: url,
+                    gatewayStableID: stableID,
+                    tls: Self.publicGatewayTLSParams(),
+                    token: token,
+                    bootstrapToken: bootstrapToken,
+                    password: password)
+                return
+            }
+
             let resolvedUseTLS = self.resolveManualUseTLS(host: manualHost, useTLS: manualTLS)
             guard let resolvedPort = self.resolveManualPort(
                 host: manualHost,
@@ -374,6 +424,25 @@ final class GatewayConnectionController {
 
         if let lastKnown = GatewaySettingsStore.loadLastGatewayConnection() {
             if case let .manual(host, port, useTLS, stableID) = lastKnown {
+                if Self.isPublicGatewayHost(host) {
+                    // Public gateway: system CA trust, no stored pin required.
+                    guard let url = self.buildGatewayURL(
+                        host: host,
+                        port: port > 0 ? port : 443,
+                        useTLS: true,
+                        path: Self.storedPublicGatewayPath())
+                    else { return }
+
+                    self.didAutoConnect = true
+                    self.startAutoConnect(
+                        url: url,
+                        gatewayStableID: stableID,
+                        tls: Self.publicGatewayTLSParams(),
+                        token: token,
+                        bootstrapToken: bootstrapToken,
+                        password: password)
+                    return
+                }
                 let resolvedUseTLS = self.resolveManualUseTLS(host: host, useTLS: useTLS)
                 let stored = GatewayTLSStore.loadFingerprint(stableID: stableID)
                 let tlsParams = stored.map { fp in
@@ -675,13 +744,26 @@ final class GatewayConnectionController {
         }
     }
 
-    private func buildGatewayURL(host: String, port: Int, useTLS: Bool) -> URL? {
+    private func buildGatewayURL(host: String, port: Int, useTLS: Bool, path: String? = nil) -> URL? {
         let scheme = useTLS ? "wss" : "ws"
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
         components.port = port
+        if let path {
+            let normalized = Self.normalizedGatewayPath(path)
+            if !normalized.isEmpty {
+                components.path = normalized
+            }
+        }
         return components.url
+    }
+
+    static func normalizedGatewayPath(_ raw: String) -> String {
+        var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, path != "/" else { return "" }
+        if !path.hasPrefix("/") { path = "/" + path }
+        return path
     }
 
     private func resolveManualUseTLS(host: String, useTLS: Bool) -> Bool {
@@ -695,7 +777,35 @@ final class GatewayConnectionController {
     private func shouldForceTLS(host: String) -> Bool {
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if trimmed.isEmpty { return false }
+        if Self.isPublicGatewayHost(trimmed) { return true }
         return trimmed.hasSuffix(".ts.net") || trimmed.hasSuffix(".ts.net.")
+    }
+
+    /// Hosts of the public Iànua front (nginx on Prod-01). These connect over
+    /// WSS with system TLS trust (CA validation) instead of TOFU leaf pinning:
+    /// the public certificates rotate (Let's Encrypt), so a stored leaf pin
+    /// would break at every renewal. TLS is always forced and plaintext is
+    /// never offered for these hosts.
+    static let publicGatewayHosts: Set<String> = ["ianua.differen.it"]
+
+    static func isPublicGatewayHost(_ rawHost: String) -> Bool {
+        var host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if host.hasSuffix(".") { host.removeLast() }
+        guard !host.isEmpty else { return false }
+        return self.publicGatewayHosts.contains(host)
+    }
+
+    private static func publicGatewayTLSParams() -> GatewayTLSParams {
+        GatewayTLSParams(required: true, expectedFingerprint: nil, allowTOFU: false, storeKey: nil)
+    }
+
+    /// Secret WSS path segment of the public gateway route (set from Settings;
+    /// mirrors the nginx location on ianua.differen.it). Empty means the
+    /// public profile is not configured yet.
+    private static func storedPublicGatewayPath() -> String? {
+        let raw = UserDefaults.standard.string(forKey: "gateway.public.path")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return raw.isEmpty ? nil : raw
     }
 
     private static func isLoopbackHost(_ rawHost: String) -> Bool {
@@ -1005,6 +1115,18 @@ extension GatewayConnectionController {
 
     func _test_resolveManualPort(host: String, port: Int, useTLS: Bool) -> Int? {
         self.resolveManualPort(host: host, port: port, useTLS: useTLS)
+    }
+
+    func _test_buildGatewayURL(host: String, port: Int, useTLS: Bool, path: String?) -> URL? {
+        self.buildGatewayURL(host: host, port: port, useTLS: useTLS, path: path)
+    }
+
+    func _test_shouldForceTLS(host: String) -> Bool {
+        self.shouldForceTLS(host: host)
+    }
+
+    static func _test_publicGatewayTLSParams() -> GatewayTLSParams {
+        self.publicGatewayTLSParams()
     }
 }
 #endif

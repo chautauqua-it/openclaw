@@ -127,6 +127,56 @@ import Testing
         #expect(controller._test_resolveManualPort(host: "device.sample.ts.net", port: 18789, useTLS: true) == 18789)
     }
 
+    @Test @MainActor func publicGatewayHost_matchesAllowlistOnly() async {
+        #expect(GatewayConnectionController.isPublicGatewayHost("ianua.differen.it") == true)
+        #expect(GatewayConnectionController.isPublicGatewayHost(" IANUA.DIFFEREN.IT ") == true)
+        #expect(GatewayConnectionController.isPublicGatewayHost("ianua.differen.it.") == true)
+
+        #expect(GatewayConnectionController.isPublicGatewayHost("evil-ianua.differen.it") == false)
+        #expect(GatewayConnectionController.isPublicGatewayHost("ianua.differen.it.attacker.com") == false)
+        #expect(GatewayConnectionController.isPublicGatewayHost("differen.it") == false)
+        #expect(GatewayConnectionController.isPublicGatewayHost("") == false)
+    }
+
+    @Test @MainActor func publicGatewayHost_forcesTLS() async {
+        let controller = makeController()
+        #expect(controller._test_shouldForceTLS(host: "ianua.differen.it") == true)
+        #expect(controller._test_shouldForceTLS(host: "gateway.example.com") == false)
+    }
+
+    @Test @MainActor func publicGatewayTLSParams_useSystemTrustWithoutPinOrTOFU() async {
+        let params = GatewayConnectionController._test_publicGatewayTLSParams()
+        #expect(params.required == true)
+        #expect(params.expectedFingerprint == nil)
+        #expect(params.allowTOFU == false)
+        #expect(params.storeKey == nil)
+    }
+
+    @Test @MainActor func normalizedGatewayPath_handlesPrefixAndBlank() async {
+        #expect(GatewayConnectionController.normalizedGatewayPath("gw-abc123") == "/gw-abc123")
+        #expect(GatewayConnectionController.normalizedGatewayPath("/gw-abc123") == "/gw-abc123")
+        #expect(GatewayConnectionController.normalizedGatewayPath("  gw-abc123  ") == "/gw-abc123")
+        #expect(GatewayConnectionController.normalizedGatewayPath("") == "")
+        #expect(GatewayConnectionController.normalizedGatewayPath("   ") == "")
+        #expect(GatewayConnectionController.normalizedGatewayPath("/") == "")
+    }
+
+    @Test @MainActor func buildGatewayURL_appendsOptionalPath() async {
+        let controller = makeController()
+
+        let plain = controller._test_buildGatewayURL(
+            host: "ianua.differen.it", port: 443, useTLS: true, path: nil)
+        #expect(plain?.absoluteString == "wss://ianua.differen.it:443")
+
+        let withPath = controller._test_buildGatewayURL(
+            host: "ianua.differen.it", port: 443, useTLS: true, path: "gw-abc123")
+        #expect(withPath?.absoluteString == "wss://ianua.differen.it:443/gw-abc123")
+
+        let blankPath = controller._test_buildGatewayURL(
+            host: "ianua.differen.it", port: 443, useTLS: true, path: "   ")
+        #expect(blankPath?.absoluteString == "wss://ianua.differen.it:443")
+    }
+
     @Test @MainActor func clearAllTLSFingerprints_removesStoredPins() async {
         let stableID1 = "test|\(UUID().uuidString)"
         let stableID2 = "test|\(UUID().uuidString)"
