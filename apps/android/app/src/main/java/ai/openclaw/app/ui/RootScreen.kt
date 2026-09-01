@@ -17,4 +17,5 @@ fun RootScreen(viewModel: MainViewModel) {
   }
 
   PostOnboardingTabs(viewModel = viewModel, modifier = Modifier.fillMaxSize())
+  ExecApprovalHost(viewModel = viewModel)
 }

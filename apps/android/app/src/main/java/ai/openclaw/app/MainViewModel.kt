@@ -1,5 +1,6 @@
 package ai.openclaw.app
 
+import ai.openclaw.app.authenticator.ExecApprovalPrompt
 import ai.openclaw.app.chat.ChatMessage
 import ai.openclaw.app.chat.ChatPendingToolCall
 import ai.openclaw.app.chat.ChatSessionEntry
@@ -82,6 +83,7 @@ class MainViewModel(
   val serverName: StateFlow<String?> = runtimeState(initial = null) { it.serverName }
   val remoteAddress: StateFlow<String?> = runtimeState(initial = null) { it.remoteAddress }
   val pendingGatewayTrust: StateFlow<NodeRuntime.GatewayTrustPrompt?> = runtimeState(initial = null) { it.pendingGatewayTrust }
+  val execApprovalPrompt: StateFlow<ExecApprovalPrompt?> = runtimeState(initial = null) { it.execApprovalPrompt }
   val seamColorArgb: StateFlow<Long> = runtimeState(initial = 0xFF0EA5E9) { it.seamColorArgb }
   val mainSessionKey: StateFlow<String> = runtimeState(initial = "main") { it.mainSessionKey }
 
@@ -329,6 +331,17 @@ class MainViewModel(
 
   fun disconnect() {
     runtimeRef.value?.disconnect()
+  }
+
+  fun resolveExecApproval(
+    decision: String,
+    enteredCode: String,
+  ) {
+    runtimeRef.value?.resolveExecApproval(decision, enteredCode)
+  }
+
+  fun dismissExecApproval() {
+    runtimeRef.value?.dismissExecApproval()
   }
 
   fun acceptGatewayTrustPrompt() {
