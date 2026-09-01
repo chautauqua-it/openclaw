@@ -10,6 +10,7 @@ struct RootTabs: View {
     @State private var toastDismissTask: Task<Void, Never>?
     @State private var showGatewayActions: Bool = false
     @State private var showGatewayProblemDetails: Bool = false
+    @State private var authenticatorPresentation = AuthenticatorPresentation.shared
 
     var body: some View {
         TabView(selection: self.$selectedTab) {
@@ -95,6 +96,9 @@ struct RootTabs: View {
             isPresented: self.$showGatewayActions,
             onDisconnect: { self.appModel.disconnectGateway() },
             onOpenSettings: { self.selectedTab = 2 })
+        .sheet(isPresented: self.$authenticatorPresentation.isPresented) {
+            NavigationStack { AuthenticatorScreen() }
+        }
         .sheet(isPresented: self.$showGatewayProblemDetails) {
             if let gatewayProblem = self.appModel.lastGatewayProblem {
                 GatewayProblemDetailsSheet(

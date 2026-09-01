@@ -334,6 +334,9 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
         if userInfo[PushDebugView.localDebugKey] as? Bool == true
             || Self.isWatchPromptNotification(userInfo)
             || ExecApprovalNotificationBridge.shouldPresentNotification(userInfo: userInfo)
+            || IanuaUnlockPushRoute.isUnlockPush(
+                userInfo: userInfo,
+                title: notification.request.content.title)
         {
             completionHandler([.banner, .list, .sound])
             return
@@ -364,6 +367,18 @@ final class OpenClawAppDelegate: NSObject, UIApplicationDelegate, @preconcurrenc
                     return
                 }
                 self.routeExecApprovalPrompt(prompt)
+                completionHandler()
+            }
+            return
+        }
+        let content = response.notification.request.content
+        if IanuaUnlockPushRoute.shouldRoute(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: content.userInfo,
+            title: content.title)
+        {
+            Task { @MainActor in
+                AuthenticatorPresentation.shared.requestPresentation()
                 completionHandler()
             }
             return
