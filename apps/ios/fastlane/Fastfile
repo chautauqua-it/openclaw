@@ -231,6 +231,8 @@ REQUIRED_ARCHIVE_PLIST_KEYS = %w[
 ].freeze
 
 def verify_archive_privacy_keys(archive_path)
+  # fastlane esegue con cwd fastlane/: i path relativi del lane sono root-repo.
+  archive_path = File.expand_path(archive_path, File.join(__dir__, ".."))
   app_plist = Dir[File.join(archive_path, "Products", "Applications", "*.app", "Info.plist")].first
   UI.user_error!("Archive verification failed: no app Info.plist under #{archive_path}") unless app_plist
 
