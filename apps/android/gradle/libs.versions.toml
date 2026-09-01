@@ -20,6 +20,7 @@ junit-vintage = "6.0.3"
 kotest = "6.1.11"
 ktlint-gradle = "14.2.0"
 kotlin = "2.3.21"
+linphone = "5.4.125"
 material = "1.13.0"
 okhttp = "5.3.2"
 play-services-code-scanner = "16.1.0"
@@ -60,6 +61,7 @@ kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5-jvm", version.
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization-json" }
+linphone-sdk = { module = "org.linphone:linphone-sdk-android", version.ref = "linphone" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }

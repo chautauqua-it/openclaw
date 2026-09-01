@@ -200,6 +200,8 @@ dependencies {
   implementation(libs.androidx.exifinterface)
   implementation(libs.okhttp)
   implementation(libs.bcprov)
+  // SIP softphone verso Mercurio: stesso SDK del client iOS (linphonesw).
+  implementation(libs.linphone.sdk)
   implementation(libs.commonmark)
   implementation(libs.commonmark.ext.autolink)
   implementation(libs.commonmark.ext.gfm.strikethrough)
