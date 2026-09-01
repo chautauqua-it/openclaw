@@ -1,6 +1,8 @@
 package ai.openclaw.app.ui
 
 import ai.openclaw.app.gateway.isLoopbackGatewayHost
+import ai.openclaw.app.gateway.normalizeGatewayWsPath
+import ai.openclaw.app.gateway.splitGatewayHostInput
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -15,6 +17,7 @@ internal data class GatewayEndpointConfig(
   val port: Int,
   val tls: Boolean,
   val displayUrl: String,
+  val path: String? = null,
 )
 
 internal data class GatewaySetupCode(
@@ -28,6 +31,7 @@ internal data class GatewayConnectConfig(
   val host: String,
   val port: Int,
   val tls: Boolean,
+  val path: String?,
   val bootstrapToken: String,
   val token: String,
   val password: String,
@@ -93,6 +97,7 @@ internal fun resolveGatewayConnectConfig(
       host = parsed.host,
       port = parsed.port,
       tls = parsed.tls,
+      path = parsed.path,
       bootstrapToken = setupBootstrapToken,
       token = sharedToken,
       password = sharedPassword,
@@ -109,12 +114,14 @@ internal fun resolveGatewayConnectConfig(
       savedManualEndpoint.host == parsed.host &&
       savedManualEndpoint.port == parsed.port &&
       savedManualEndpoint.tls == parsed.tls &&
+      savedManualEndpoint.path == parsed.path &&
       fallbackToken.isBlank() &&
       fallbackPassword.isBlank()
   return GatewayConnectConfig(
     host = parsed.host,
     port = parsed.port,
     tls = parsed.tls,
+    path = parsed.path,
     bootstrapToken = if (preserveBootstrapToken) fallbackBootstrapToken.trim() else "",
     token = fallbackToken.trim(),
     password = fallbackPassword.trim(),
@@ -165,16 +172,18 @@ internal fun parseGatewayEndpointResult(rawInput: String): GatewayEndpointParseR
       else -> 443
     }
   val port = uri.port.takeIf { it in 1..65535 } ?: defaultPort
+  val path = normalizeGatewayWsPath(uri.path)
   val displayHost = if (host.contains(":")) "[$host]" else host
-  val displayUrl =
+  val displayBase =
     if (port == displayPort && defaultPort == displayPort) {
       "${if (tls) "https" else "http"}://$displayHost"
     } else {
       "${if (tls) "https" else "http"}://$displayHost:$port"
     }
+  val displayUrl = displayBase + path.orEmpty()
 
   return GatewayEndpointParseResult(
-    config = GatewayEndpointConfig(host = host, port = port, tls = tls, displayUrl = displayUrl),
+    config = GatewayEndpointConfig(host = host, port = port, tls = tls, displayUrl = displayUrl, path = path),
   )
 }
 
@@ -248,7 +257,7 @@ internal fun composeGatewayManualUrl(
   portInput: String,
   tls: Boolean,
 ): String? {
-  val host = hostInput.trim()
+  val (host, path) = splitGatewayHostInput(hostInput)
   if (host.isEmpty()) return null
   val portTrimmed = portInput.trim()
   val port =
@@ -259,7 +268,7 @@ internal fun composeGatewayManualUrl(
     }
   if (port !in 1..65535) return null
   val scheme = if (tls) "https" else "http"
-  return "$scheme://$host:$port"
+  return "$scheme://$host:$port${path.orEmpty()}"
 }
 
 private fun parseJsonObject(input: String): JsonObject? = runCatching { gatewaySetupJson.parseToJsonElement(input).jsonObject }.getOrNull()

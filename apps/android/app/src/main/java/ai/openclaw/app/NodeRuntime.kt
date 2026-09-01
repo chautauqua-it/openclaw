@@ -17,6 +17,7 @@ import ai.openclaw.app.gateway.GatewaySession
 import ai.openclaw.app.gateway.GatewayTlsProbeFailure
 import ai.openclaw.app.gateway.GatewayTlsProbeResult
 import ai.openclaw.app.gateway.probeGatewayTlsFingerprint
+import ai.openclaw.app.gateway.splitGatewayHostInput
 import ai.openclaw.app.node.A2UIHandler
 import ai.openclaw.app.node.CalendarHandler
 import ai.openclaw.app.node.CallLogHandler
@@ -798,10 +799,10 @@ class NodeRuntime(
 
   private fun resolvePreferredGatewayEndpoint(): GatewayEndpoint? {
     if (manualEnabled.value) {
-      val host = manualHost.value.trim()
+      val (host, path) = splitGatewayHostInput(manualHost.value)
       val port = manualPort.value
       if (host.isEmpty() || port !in 1..65535) return null
-      return GatewayEndpoint.manual(host = host, port = port)
+      return GatewayEndpoint.manual(host = host, port = port, path = path)
     }
 
     val targetStableId = lastDiscoveredStableId.value.trim()
@@ -1127,13 +1128,13 @@ class NodeRuntime(
     )
 
   fun connectManual() {
-    val host = manualHost.value.trim()
+    val (host, path) = splitGatewayHostInput(manualHost.value)
     val port = manualPort.value
     if (host.isEmpty() || port <= 0 || port > 65535) {
       _statusText.value = "Failed: invalid manual host/port"
       return
     }
-    connect(GatewayEndpoint.manual(host = host, port = port))
+    connect(GatewayEndpoint.manual(host = host, port = port, path = path))
   }
 
   private fun loadStoredRoleDeviceToken(role: String): String? {

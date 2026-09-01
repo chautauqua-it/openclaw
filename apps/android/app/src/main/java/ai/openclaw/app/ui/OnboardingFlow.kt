@@ -911,7 +911,7 @@ fun OnboardingFlow(
                     }
                   attemptedConnect = true
                   viewModel.setManualEnabled(true)
-                  viewModel.setManualHost(parsed.config.host)
+                  viewModel.setManualHost(parsed.config.host + parsed.config.path.orEmpty())
                   viewModel.setManualPort(parsed.config.port)
                   viewModel.setManualTls(parsed.config.tls)
                   if (gatewayInputMode == GatewayInputMode.Manual) {
@@ -927,7 +927,7 @@ fun OnboardingFlow(
                   }
                   viewModel.setGatewayPassword(password)
                   viewModel.connect(
-                    GatewayEndpoint.manual(host = parsed.config.host, port = parsed.config.port),
+                    GatewayEndpoint.manual(host = parsed.config.host, port = parsed.config.port, path = parsed.config.path),
                     token = token.ifEmpty { null },
                     bootstrapToken = bootstrapToken,
                     password = password.ifEmpty { null },

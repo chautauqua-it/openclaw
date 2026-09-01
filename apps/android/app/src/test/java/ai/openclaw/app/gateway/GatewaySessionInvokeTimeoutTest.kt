@@ -22,6 +22,18 @@ class GatewaySessionInvokeTimeoutTest {
   }
 
   @Test
+  fun buildGatewayWebSocketUrl_appendsNormalizedPath() {
+    assertEquals(
+      "wss://gateway.example:443/gw-secret",
+      buildGatewayWebSocketUrl("gateway.example", 443, useTls = true, path = "gw-secret"),
+    )
+    assertEquals(
+      "wss://gateway.example:443",
+      buildGatewayWebSocketUrl("gateway.example", 443, useTls = true, path = "/"),
+    )
+  }
+
+  @Test
   fun resolveInvokeResultAckTimeoutMs_usesFloorWhenMissingOrTooSmall() {
     assertEquals(15_000L, resolveInvokeResultAckTimeoutMs(null))
     assertEquals(15_000L, resolveInvokeResultAckTimeoutMs(0L))

@@ -288,7 +288,7 @@ fun ConnectTabScreen(viewModel: MainViewModel) {
             viewModel.resetGatewaySetupAuth()
           }
           viewModel.setManualEnabled(true)
-          viewModel.setManualHost(config.host)
+          viewModel.setManualHost(config.host + config.path.orEmpty())
           viewModel.setManualPort(config.port)
           viewModel.setManualTls(config.tls)
           viewModel.setGatewayBootstrapToken(config.bootstrapToken)
@@ -299,7 +299,7 @@ fun ConnectTabScreen(viewModel: MainViewModel) {
           }
           viewModel.setGatewayPassword(config.password)
           viewModel.connect(
-            GatewayEndpoint.manual(host = config.host, port = config.port),
+            GatewayEndpoint.manual(host = config.host, port = config.port, path = config.path),
             token = config.token.ifEmpty { null },
             bootstrapToken = config.bootstrapToken.ifEmpty { null },
             password = config.password.ifEmpty { null },

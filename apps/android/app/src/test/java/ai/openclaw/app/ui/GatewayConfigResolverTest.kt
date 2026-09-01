@@ -433,6 +433,47 @@ class GatewayConfigResolverTest {
   }
 
   @Test
+  fun parseGatewayEndpointKeepsSecretPathForPublicWssUrls() {
+    val parsed = parseGatewayEndpoint("wss://gateway.example/gw-secret")
+
+    assertEquals("gateway.example", parsed?.host)
+    assertEquals(443, parsed?.port)
+    assertEquals(true, parsed?.tls)
+    assertEquals("/gw-secret", parsed?.path)
+    assertEquals("https://gateway.example/gw-secret", parsed?.displayUrl)
+  }
+
+  @Test
+  fun composeGatewayManualUrlKeepsPathTypedInHostField() {
+    val url = composeGatewayManualUrl("gateway.example/gw-secret", "", tls = true)
+
+    assertEquals("https://gateway.example:443/gw-secret", url)
+  }
+
+  @Test
+  fun resolveGatewayConnectConfigManualCarriesSecretPath() {
+    val resolved =
+      resolveGatewayConnectConfig(
+        useSetupCode = false,
+        setupCode = "",
+        savedManualHost = "",
+        savedManualPort = "",
+        savedManualTls = true,
+        manualHostInput = "gateway.example/gw-secret",
+        manualPortInput = "",
+        manualTlsInput = true,
+        fallbackBootstrapToken = "",
+        fallbackToken = "",
+        fallbackPassword = "",
+      )
+
+    assertEquals("gateway.example", resolved?.host)
+    assertEquals(443, resolved?.port)
+    assertEquals(true, resolved?.tls)
+    assertEquals("/gw-secret", resolved?.path)
+  }
+
+  @Test
   fun composeGatewayManualUrlDefaultsPortTo443WhenTlsAndPortBlank() {
     val url = composeGatewayManualUrl("mydevice.tail1234.ts.net", "", tls = true)
 
