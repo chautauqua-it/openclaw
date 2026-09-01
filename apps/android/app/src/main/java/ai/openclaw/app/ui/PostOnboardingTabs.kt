@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ScreenShare
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -56,6 +57,7 @@ private enum class HomeTab(
   Connect(label = "Connect", icon = Icons.Default.CheckCircle),
   Chat(label = "Chat", icon = Icons.Default.ChatBubble),
   Voice(label = "Voice", icon = Icons.Default.RecordVoiceOver),
+  Phone(label = "Phone", icon = Icons.Default.Phone),
   Screen(label = "Screen", icon = Icons.AutoMirrored.Filled.ScreenShare),
   Settings(label = "Settings", icon = Icons.Default.Settings),
 }
@@ -177,6 +179,7 @@ fun PostOnboardingTabs(
         HomeTab.Connect -> ConnectTabScreen(viewModel = viewModel)
         HomeTab.Chat -> if (!chatTabStarted) ChatSheet(viewModel = viewModel)
         HomeTab.Voice -> VoiceTabScreen(viewModel = viewModel)
+        HomeTab.Phone -> PhoneTabScreen()
         HomeTab.Screen -> Unit
         HomeTab.Settings -> SettingsSheet(viewModel = viewModel)
       }
@@ -314,40 +317,48 @@ private fun BottomTabBar(
       border = BorderStroke(1.dp, mobileBorder),
       shadowElevation = 6.dp,
     ) {
-      Row(
+      Column(
         modifier =
           Modifier
             .fillMaxWidth()
             .windowInsetsPadding(safeInsets)
             .padding(horizontal = 10.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
-        HomeTab.entries.forEach { tab ->
-          val active = tab == activeTab
-          Surface(
-            onClick = { onSelect(tab) },
-            modifier = Modifier.weight(1f).heightIn(min = 58.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = if (active) mobileAccentSoft else Color.Transparent,
-            border = if (active) BorderStroke(1.dp, LocalMobileColors.current.chipBorderConnecting) else null,
-            shadowElevation = 0.dp,
+        HomeTab.entries.toList().chunked(3).forEach { tabs ->
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
           ) {
-            Column(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 7.dp),
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-              Icon(
-                imageVector = tab.icon,
-                contentDescription = tab.label,
-                tint = if (active) mobileAccent else mobileTextTertiary,
-              )
-              Text(
-                text = tab.label,
-                color = if (active) mobileAccent else mobileTextSecondary,
-                style = mobileCaption2.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.Medium),
-              )
+            tabs.forEach { tab ->
+              val active = tab == activeTab
+              Surface(
+                onClick = { onSelect(tab) },
+                modifier = Modifier.weight(1f).heightIn(min = 50.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = if (active) mobileAccentSoft else Color.Transparent,
+                border = if (active) BorderStroke(1.dp, LocalMobileColors.current.chipBorderConnecting) else null,
+                shadowElevation = 0.dp,
+              ) {
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+                  horizontalArrangement = Arrangement.Center,
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Icon(
+                    imageVector = tab.icon,
+                    contentDescription = tab.label,
+                    tint = if (active) mobileAccent else mobileTextTertiary,
+                  )
+                  Text(
+                    modifier = Modifier.padding(start = 5.dp),
+                    text = tab.label,
+                    color = if (active) mobileAccent else mobileTextSecondary,
+                    style = mobileCaption2.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.Medium),
+                  )
+                }
+              }
             }
           }
         }

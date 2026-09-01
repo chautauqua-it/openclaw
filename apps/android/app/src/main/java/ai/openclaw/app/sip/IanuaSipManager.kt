@@ -63,20 +63,28 @@ class IanuaSipManager(
         state: Call.State,
         message: String,
       ) {
-        when (state) {
-          Call.State.IncomingReceived,
-          Call.State.OutgoingInit,
-          Call.State.OutgoingProgress,
-          Call.State.OutgoingRinging,
-          Call.State.Connected,
-          Call.State.StreamsRunning,
-          -> _state.value = _state.value.copy(activePeer = call.remoteAddress.username)
-          Call.State.End,
-          Call.State.Error,
-          Call.State.Released,
-          -> _state.value = _state.value.copy(activePeer = null, error = if (state == Call.State.Error) message else null)
-          else -> Unit
-        }
+        val nextCallStatus =
+          when (state) {
+            Call.State.IncomingReceived -> SipCallStatus.Incoming
+            Call.State.OutgoingInit,
+            Call.State.OutgoingProgress,
+            Call.State.OutgoingRinging,
+            -> SipCallStatus.Calling
+            Call.State.Connected,
+            Call.State.StreamsRunning,
+            -> SipCallStatus.Active
+            Call.State.End,
+            Call.State.Error,
+            Call.State.Released,
+            -> SipCallStatus.Idle
+            else -> return
+          }
+        _state.value =
+          _state.value.copy(
+            activePeer = if (nextCallStatus == SipCallStatus.Idle) null else call.remoteAddress.username,
+            callStatus = nextCallStatus,
+            error = if (state == Call.State.Error) message else null,
+          )
       }
     }
 

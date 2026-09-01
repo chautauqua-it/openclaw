@@ -4,10 +4,13 @@ import ai.openclaw.app.wad.WadSipConfig
 
 enum class SipRegistrationStatus { Idle, Loading, Registering, Registered, Failed }
 
+enum class SipCallStatus { Idle, Incoming, Calling, Active }
+
 data class SipState(
   val status: SipRegistrationStatus = SipRegistrationStatus.Idle,
   val extension: String? = null,
   val activePeer: String? = null,
+  val callStatus: SipCallStatus = SipCallStatus.Idle,
   val error: String? = null,
 )
 
