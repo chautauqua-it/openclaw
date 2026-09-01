@@ -34,6 +34,7 @@ struct SettingsTab: View {
     @AppStorage("gateway.manual.host") private var manualGatewayHost: String = ""
     @AppStorage("gateway.manual.port") private var manualGatewayPort: Int = 18789
     @AppStorage("gateway.manual.tls") private var manualGatewayTLS: Bool = true
+    @AppStorage("gateway.public.path") private var publicGatewayPath: String = ""
     @AppStorage("gateway.discovery.debugLogs") private var discoveryDebugLogsEnabled: Bool = false
     @AppStorage("canvas.debugStatusEnabled") private var canvasDebugStatusEnabled: Bool = false
 
@@ -192,6 +193,16 @@ struct SettingsTab: View {
                                 .keyboardType(.numberPad)
 
                             Toggle("Use TLS", isOn: self.$manualGatewayTLS)
+
+                            if GatewayConnectionController.isPublicGatewayHost(self.manualGatewayHost) {
+                                TextField("Percorso gateway (segreto)", text: self.$publicGatewayPath)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                Text("Segmento segreto della route pubblica WSS. "
+                                    + "Richiesto per connettersi via \(self.manualGatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)).")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
 
                             Button {
                                 Task { await self.connectManual() }
