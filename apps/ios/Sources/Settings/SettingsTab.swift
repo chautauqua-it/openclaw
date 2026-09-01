@@ -198,8 +198,10 @@ struct SettingsTab: View {
                                 TextField("Percorso gateway (segreto)", text: self.$publicGatewayPath)
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
+                                let publicHostLabel = self.manualGatewayHost
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
                                 Text("Segmento segreto della route pubblica WSS. "
-                                    + "Richiesto per connettersi via \(self.manualGatewayHost.trimmingCharacters(in: .whitespacesAndNewlines)).")
+                                    + "Richiesto per connettersi via \(publicHostLabel).")
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
