@@ -141,7 +141,8 @@ private fun authenticateWithBiometrics(
   onError: (String) -> Unit,
 ) {
   val prompt =
-    BiometricPrompt.Builder(context)
+    BiometricPrompt
+      .Builder(context)
       .setTitle("Iànua Authenticator")
       .setSubtitle(subtitle)
       .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.DEVICE_CREDENTIAL)

@@ -83,7 +83,8 @@ object AuthenticatorStore {
   private fun generateKeyPair(strongBox: Boolean): PublicKey {
     val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE_PROVIDER)
     val spec =
-      KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_SIGN)
+      KeyGenParameterSpec
+        .Builder(KEY_ALIAS, KeyProperties.PURPOSE_SIGN)
         .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
         .setDigests(KeyProperties.DIGEST_SHA256)
         .apply { if (strongBox) setIsStrongBoxBacked(true) }
@@ -92,9 +93,7 @@ object AuthenticatorStore {
     return generator.generateKeyPair().public
   }
 
-  private fun loadKeyStore(): KeyStore =
-    KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
+  private fun loadKeyStore(): KeyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
 }
 
-internal fun sha256Hex(bytes: ByteArray): String =
-  MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+internal fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
