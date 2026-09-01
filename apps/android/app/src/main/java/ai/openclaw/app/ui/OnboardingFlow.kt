@@ -547,7 +547,7 @@ fun OnboardingFlow(
           verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
           Text(
-            "OpenClaw",
+            "Iànua",
             style = onboardingDisplayStyle,
             color = onboardingText,
           )
@@ -1792,7 +1792,7 @@ private fun FinalStep(
           if (showDiagnostics) {
             Text("Error", style = onboardingCaption1Style.copy(fontWeight = FontWeight.Bold), color = onboardingTextSecondary)
             Text(
-              "OpenClaw Android ${openClawAndroidVersionLabel()}",
+              "Iànua Android ${openClawAndroidVersionLabel()}",
               style = onboardingCaption1Style,
               color = onboardingTextSecondary,
             )
@@ -1819,7 +1819,7 @@ private fun FinalStep(
             CommandBlock("openclaw devices list")
             CommandBlock("openclaw devices approve <requestId>")
             Text(
-              "OpenClaw retries automatically while this screen stays open.",
+              "Iànua retries automatically while this screen stays open.",
               style = onboardingCalloutStyle,
               color = onboardingTextSecondary,
             )

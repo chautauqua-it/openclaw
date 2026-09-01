@@ -53,9 +53,10 @@ internal fun lightMobileColors() =
     text = Color(0xFF17181C),
     textSecondary = Color(0xFF5D6472),
     textTertiary = Color(0xFF99A0AE),
-    accent = Color(0xFF1D5DD8),
+    // Brand Iànua: blu neon come l'app iOS (accent #2278f8, strong #1560d8).
+    accent = Color(0xFF2278F8),
     accentSoft = Color(0xFFECF3FF),
-    accentBorderStrong = Color(0xFF184DAF),
+    accentBorderStrong = Color(0xFF1560D8),
     success = Color(0xFF2F8C5A),
     successSoft = Color(0xFFEEF9F3),
     warning = Color(0xFFC8841A),

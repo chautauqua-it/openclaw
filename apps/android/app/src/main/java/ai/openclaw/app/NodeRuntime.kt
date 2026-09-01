@@ -1,5 +1,9 @@
 package ai.openclaw.app
 
+import ai.openclaw.app.authenticator.AuthenticatorStore
+import ai.openclaw.app.authenticator.ExecApprovalController
+import ai.openclaw.app.authenticator.ExecApprovalPrompt
+import ai.openclaw.app.authenticator.buildAuthenticatorEnrollmentPayload
 import ai.openclaw.app.chat.ChatController
 import ai.openclaw.app.chat.ChatMessage
 import ai.openclaw.app.chat.ChatPendingToolCall
@@ -346,6 +350,7 @@ class NodeRuntime(
         updateStatus()
         showLocalCanvasOnConnect()
         publishNodePresenceAliveBeacon(NodePresenceAliveBeacon.Trigger.Connect)
+        enrollAuthenticatorIdentity()
         val endpoint = connectedEndpoint
         val auth = activeGatewayAuth
         if (endpoint != null && auth != null) {
@@ -376,6 +381,31 @@ class NodeRuntime(
       scope.launch {
         nodeSession.sendNodeEvent(event = event, payloadJson = payloadJson)
       }
+    }
+  }
+
+  private val execApprovals = ExecApprovalController(scope = scope, session = operatorSession)
+
+  val execApprovalPrompt: StateFlow<ExecApprovalPrompt?>
+    get() = execApprovals.prompt
+
+  fun resolveExecApproval(
+    decision: String,
+    enteredCode: String,
+  ) = execApprovals.resolve(decision, enteredCode)
+
+  fun dismissExecApproval() = execApprovals.dismiss()
+
+  private fun enrollAuthenticatorIdentity() {
+    scope.launch {
+      val identity = AuthenticatorStore.identity() ?: return@launch
+      val payload =
+        buildAuthenticatorEnrollmentPayload(
+          deviceId = identityStore.loadOrCreate().deviceId,
+          topic = appContext.packageName,
+          identity = identity,
+        )
+      nodeSession.sendNodeEvent("push.apns.register", payload)
     }
   }
 
@@ -1272,6 +1302,7 @@ class NodeRuntime(
     event: String,
     payloadJson: String?,
   ) {
+    if (execApprovals.handleGatewayEvent(event, payloadJson)) return
     micCapture.handleGatewayEvent(event, payloadJson)
     talkMode.handleGatewayEvent(event, payloadJson)
     chat.handleGatewayEvent(event, payloadJson)
@@ -1377,7 +1408,7 @@ class NodeRuntime(
         HomeCanvasPayload(
           gatewayState = "connecting",
           eyebrow = "Reconnecting",
-          title = "OpenClaw is syncing back up",
+          title = "Iànua is syncing back up",
           subtitle =
             "The gateway session is coming back online. Agent shortcuts should settle automatically in a moment.",
           gatewayLabel = gatewayLabel,
@@ -1391,7 +1422,7 @@ class NodeRuntime(
       HomeCanvasGatewayState.Error, HomeCanvasGatewayState.Offline ->
         HomeCanvasPayload(
           gatewayState = if (state == HomeCanvasGatewayState.Error) "error" else "offline",
-          eyebrow = "Welcome to OpenClaw",
+          eyebrow = "Benvenuto in Iànua",
           title = "Your phone stays quiet until it is needed",
           subtitle =
             "Pair this device to your gateway to wake it only for real work, keep a live agent overview handy, and avoid battery-draining background loops.",

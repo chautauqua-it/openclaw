@@ -94,7 +94,7 @@ class LocationHandler private constructor(
     if (!isForeground()) {
       return GatewaySession.InvokeResult.error(
         code = "LOCATION_BACKGROUND_UNAVAILABLE",
-        message = "LOCATION_BACKGROUND_UNAVAILABLE: location requires OpenClaw to stay open",
+        message = "LOCATION_BACKGROUND_UNAVAILABLE: location requires Iànua to stay open",
       )
     }
     if (!dataSource.hasFinePermission(appContext) && !dataSource.hasCoarsePermission(appContext)) {
