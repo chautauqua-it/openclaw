@@ -1235,6 +1235,10 @@ final class NodeAppModel {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
+            // Stesso payload del canale APNs alert: quando il nodo è connesso la
+            // push arriva da qui come notifica locale, e senza kind il routing
+            // del tap (es. sheet Authenticator) non può riconoscerla.
+            content.userInfo = ["openclaw": ["kind": IanuaUnlockPushRoute.pushTestKind]]
             if #available(iOS 15.0, *) {
                 switch params.priority ?? .active {
                 case .passive:

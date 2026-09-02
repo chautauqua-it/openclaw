@@ -15,6 +15,15 @@ struct IanuaUnlockPushRouteTests {
             title: self.unlockTitle))
     }
 
+    @Test func `matches connected node local notification payload`() {
+        // Nodo connesso al gateway: la push arriva come notifica locale da
+        // handleSystemNotify, che deve allegare lo stesso kind del canale APNs.
+        let userInfo: [AnyHashable: Any] = [
+            "openclaw": ["kind": IanuaUnlockPushRoute.pushTestKind],
+        ]
+        #expect(IanuaUnlockPushRoute.isUnlockPush(userInfo: userInfo, title: self.unlockTitle))
+    }
+
     @Test func `title marker is case insensitive`() {
         #expect(IanuaUnlockPushRoute.isUnlockPush(
             userInfo: self.unlockUserInfo,
