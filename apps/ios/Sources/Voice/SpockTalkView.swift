@@ -21,13 +21,13 @@ struct SpockTalkView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                header
-                transcript
-                kittMeter
+                self.header
+                self.transcript
+                self.kittMeter
                     .padding(.top, 10)
-                micButton
+                self.micButton
                     .padding(.top, 18)
-                footer
+                self.footer
                     .padding(.top, 12)
             }
         }
@@ -91,11 +91,11 @@ struct SpockTalkView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if case .error(let message) = self.manager.phase {
-                        errorCard(message)
+                    if case let .error(message) = self.manager.phase {
+                        self.errorCard(message)
                     }
                     ForEach(self.manager.lines) { line in
-                        bubble(for: line)
+                        self.bubble(for: line)
                             .id(line.id)
                     }
                 }
@@ -219,11 +219,23 @@ struct SpockTalkView: View {
         .accessibilityHint("Ianua continua a parlare ma non ti sente")
     }
 
-    private var footer: some View {
-        Text(self.footerText)
+    @ViewBuilder private var footer: some View {
+        if self.manager.phase == .connecting {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(self.accent)
+                Text(self.footerText)
+            }
             .font(.footnote)
             .foregroundStyle(.secondary)
             .padding(.bottom, 24)
+        } else {
+            Text(self.footerText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 24)
+        }
     }
 
     private var statusText: String {
@@ -247,7 +259,7 @@ struct SpockTalkView: View {
         case .idle: return "Tocca le barre per avviare la conversazione."
         case .listening: return "Parla pure: puoi anche interromperlo. Tocca le barre per fermare."
         case .speaking: return "Parla per interrompere."
-        case .connecting: return "Collegamento al Mac mini via Tailscale…"
+        case .connecting: return "Connessione sicura a Iànua…"
         case .error: return ""
         }
     }
@@ -270,9 +282,13 @@ struct KittVoiceMeter: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !self.active)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 14) {
-                self.column(segments: Self.sideSegments, level: self.columnLevel(jitter: sin(t * 9.1) * 0.5 + 0.5, scale: 0.72))
+                self.column(
+                    segments: Self.sideSegments,
+                    level: self.columnLevel(jitter: sin(t * 9.1) * 0.5 + 0.5, scale: 0.72))
                 self.column(segments: Self.centerSegments, level: self.columnLevel(jitter: 1.0, scale: 1.0))
-                self.column(segments: Self.sideSegments, level: self.columnLevel(jitter: sin(t * 7.3 + 1.9) * 0.5 + 0.5, scale: 0.72))
+                self.column(
+                    segments: Self.sideSegments,
+                    level: self.columnLevel(jitter: sin(t * 7.3 + 1.9) * 0.5 + 0.5, scale: 0.72))
             }
         }
         .animation(.linear(duration: 0.06), value: self.level)

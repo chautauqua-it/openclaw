@@ -4,6 +4,7 @@ import Contacts
 import SwiftUI
 
 // MARK: - Telefono SIP nativo (linphone-sdk) verso il centralino Mercurio.
+
 // Niente WebRTC: registrazione SIP/TCP diretta con l'interno personale
 // dell'utente, credenziali servite da WAD (/api/sip/config).
 
@@ -52,27 +53,30 @@ final class WADSipManager: ObservableObject {
     weak var callCenter: WADCallCenter?
 
     // MARK: Stato confinato sulla coda SIP
+
     // Il core linphone vive su `sipQueue` (seriale): iterate, registrazioni,
     // DNS e messaggistica SIP non passano MAI dal main thread — erano loro i
     // micro-hang della UI segnalati dal watchdog nella b55 (autoIterate girava
     // sul main run loop). Le proprietà `nonisolated(unsafe)` sono sicure per
     // convenzione: si leggono/scrivono SOLO dentro sipQueue.
-    nonisolated private let sipQueue = DispatchQueue(label: "wad.sip.core", qos: .userInitiated)
-    nonisolated(unsafe) private var core: Core?
-    nonisolated(unsafe) private var coreDelegate: CoreDelegate?
-    nonisolated(unsafe) private var currentCall: Call?
-    nonisolated(unsafe) private var consultCall: Call?
-    nonisolated(unsafe) private var confCall: Call?
-    nonisolated(unsafe) private var qConfRemote = ""
-    nonisolated(unsafe) private var qConfMerged = false
-    nonisolated(unsafe) private var iterateTimer: DispatchSourceTimer?
-    nonisolated(unsafe) private var qCallState: CallState = .idle
-    nonisolated(unsafe) private var qRegistered = false
-    nonisolated(unsafe) private var qDomain = ""
-    nonisolated(unsafe) private var qPickupCode = ""
-    nonisolated(unsafe) private var qConsultRemote = ""
-    nonisolated(unsafe) private var audioSessionActive = false
-    nonisolated(unsafe) private var audioSessionForced = false
+    private nonisolated let sipQueue = DispatchQueue(label: "wad.sip.core", qos: .userInitiated)
+    private nonisolated(unsafe) var core: Core?
+    private nonisolated(unsafe) var coreDelegate: CoreDelegate?
+    private nonisolated(unsafe) var currentCall: Call?
+    private nonisolated(unsafe) var consultCall: Call?
+    private nonisolated(unsafe) var confCall: Call?
+    private nonisolated(unsafe) var qConfRemote = ""
+    private nonisolated(unsafe) var qConfMerged = false
+    private nonisolated(unsafe) var iterateTimer: DispatchSourceTimer?
+    private nonisolated(unsafe) var qCallState: CallState = .idle
+    private nonisolated(unsafe) var qCallReachedMedia = false
+    private nonisolated(unsafe) var lastSuccessfulCallEnd = Date.distantPast
+    private nonisolated(unsafe) var qRegistered = false
+    private nonisolated(unsafe) var qDomain = ""
+    private nonisolated(unsafe) var qPickupCode = ""
+    private nonisolated(unsafe) var qConsultRemote = ""
+    private nonisolated(unsafe) var audioSessionActive = false
+    private nonisolated(unsafe) var audioSessionForced = false
 
     /// Specchio MainActor di "core creato e avviato" (il core vero è sulla coda).
     private var coreReady = false
@@ -92,7 +96,9 @@ final class WADSipManager: ObservableObject {
         defer {
             self.starting = false
             let elapsed = Date().timeIntervalSince(startedAt)
-            WADDeviceLog.shared.log("sip.perf", String(format: "start end %.2fs registered=%@", elapsed, self.registered ? "true" : "false"))
+            WADDeviceLog.shared.log(
+                "sip.perf",
+                String(format: "start end %.2fs registered=%@", elapsed, self.registered ? "true" : "false"))
         }
         let config: WADSipConfig
         do {
@@ -136,7 +142,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func setUpCoreOnQueue(config: WADSipConfig) throws {
+    private nonisolated func setUpCoreOnQueue(config: WADSipConfig) throws {
         let startedAt = Date()
         WADDeviceLog.shared.log("sip.perf", "setUpCore begin")
         self.tearDownCoreOnQueue()
@@ -218,7 +224,7 @@ final class WADSipManager: ObservableObject {
 
     /// Pompa linphone: iterate ogni 20ms sulla coda SIP (raccomandazione SDK
     /// per l'audio in chiamata; a riposo il lavoro per tick è trascurabile).
-    nonisolated private func startIterateOnQueue() {
+    private nonisolated func startIterateOnQueue() {
         self.iterateTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: self.sipQueue)
         timer.schedule(deadline: .now() + .milliseconds(20), repeating: .milliseconds(20), leeway: .milliseconds(5))
@@ -239,7 +245,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func tearDownCoreOnQueue() {
+    private nonisolated func tearDownCoreOnQueue() {
         self.iterateTimer?.cancel()
         self.iterateTimer = nil
         if let core = self.core {
@@ -268,7 +274,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func handleCallStateOnQueue(call: Call, state: Call.State, message: String) {
+    private nonisolated func handleCallStateOnQueue(call: Call, state: Call.State, message: String) {
         if call === self.consultCall {
             self.handleConsultStateOnQueue(state: state, message: message)
             return
@@ -291,6 +297,8 @@ final class WADSipManager: ObservableObject {
                 return
             }
             self.currentCall = call
+            self.qCallReachedMedia = false
+            self.lastSuccessfulCallEnd = .distantPast
             self.qCallState = .ringingIn
             let display = call.remoteAddress?.displayName ?? ""
             let remote = display.isEmpty ? (call.remoteAddress?.username ?? "sconosciuto") : display
@@ -304,6 +312,7 @@ final class WADSipManager: ObservableObject {
             self.qCallState = .ringingOut
             Task { @MainActor in self.callState = .ringingOut }
         case .Connected, .StreamsRunning:
+            self.qCallReachedMedia = true
             if self.qCallState != .inCall {
                 self.qCallState = .inCall
                 WADDeviceLog.shared.log("sip.callkit", "chiamata connessa")
@@ -317,6 +326,8 @@ final class WADSipManager: ObservableObject {
             }
         case .End, .Released:
             WADDeviceLog.shared.log("sip.callkit", "chiamata terminata stato=\(state)")
+            if self.qCallReachedMedia { self.lastSuccessfulCallEnd = Date() }
+            self.qCallReachedMedia = false
             if let consult = self.consultCall {
                 try? consult.terminate()
                 self.consultCall = nil
@@ -352,6 +363,11 @@ final class WADSipManager: ObservableObject {
                 self.callCenter?.sipCallEnded()
             }
         case .Error:
+            let secondsSinceSuccess = Date().timeIntervalSince(self.lastSuccessfulCallEnd)
+            let shouldDisplayError = Self.shouldDisplayCallError(
+                reachedMedia: self.qCallReachedMedia,
+                secondsSinceSuccessfulEnd: secondsSinceSuccess)
+            self.qCallReachedMedia = false
             self.core?.micEnabled = true
             self.currentCall = nil
             self.qCallState = .idle
@@ -359,7 +375,12 @@ final class WADSipManager: ObservableObject {
             Task { @MainActor in
                 self.finishCallPublished()
                 self.callCenter?.sipCallEnded()
-                self.error = "Chiamata fallita: \(message)"
+                if shouldDisplayError {
+                    self.error = "Chiamata fallita: \(message)"
+                } else {
+                    WADDeviceLog.shared.log("sip", "stato terminale ignorato dopo chiamata connessa: \(message)")
+                    self.error = nil
+                }
             }
         default:
             break
@@ -373,6 +394,13 @@ final class WADSipManager: ObservableObject {
         self.muted = false
     }
 
+    nonisolated static func shouldDisplayCallError(
+        reachedMedia: Bool,
+        secondsSinceSuccessfulEnd: TimeInterval) -> Bool
+    {
+        !reachedMedia && secondsSinceSuccessfulEnd > 3
+    }
+
     func call(_ number: String) {
         let num = WADPhoneBook.dialable(number)
         guard !num.isEmpty else { return }
@@ -380,8 +408,10 @@ final class WADSipManager: ObservableObject {
         self.sipQueue.async { self.callOnQueue(num) }
     }
 
-    nonisolated private func callOnQueue(_ num: String) {
+    private nonisolated func callOnQueue(_ num: String) {
         guard let core = self.core, self.qRegistered, self.currentCall == nil else { return }
+        self.qCallReachedMedia = false
+        self.lastSuccessfulCallEnd = .distantPast
         do {
             let address = try Factory.Instance.createAddress(addr: "sip:\(num)@\(self.qDomain)")
             let params = try core.createCallParams(call: nil)
@@ -531,7 +561,7 @@ final class WADSipManager: ObservableObject {
     /// Caso Laura 2026-07-21: cold-launch da push + pickup **201, CallKit non ha
     /// mai chiamato didActivate → audio unit mai partita, chiamata muta nei due
     /// sensi. Se entro 1.5s dalla connessione l'audio non è attivo, lo forziamo.
-    nonisolated private func scheduleAudioSessionSafetyNetOnQueue() {
+    private nonisolated func scheduleAudioSessionSafetyNetOnQueue() {
         self.sipQueue.asyncAfter(deadline: .now() + 1.5) {
             guard self.qCallState == .inCall, !self.audioSessionActive else { return }
             WADDeviceLog.shared.log("sip.callkit", "audio activate mancante, forzo attivazione")
@@ -552,7 +582,7 @@ final class WADSipManager: ObservableObject {
 
     // MARK: Uscita audio (vivavoce / auricolare / cuffie / Bluetooth)
 
-    nonisolated struct AudioOutput: Identifiable, Equatable, Sendable {
+    nonisolated struct AudioOutput: Identifiable, Equatable {
         let id: String
         let name: String
         let icon: String
@@ -569,22 +599,22 @@ final class WADSipManager: ObservableObject {
         self.audioOutputs.first(where: { $0.id == self.currentAudioOutputId })?.isSpeaker == true
     }
 
-    nonisolated private static func audioLabel(_ device: AudioDevice) -> String {
+    private nonisolated static func audioLabel(_ device: AudioDevice) -> String {
         switch device.type {
-        case .Speaker: return "Vivavoce"
-        case .Earpiece: return "Auricolare"
-        case .Bluetooth, .BluetoothA2DP: return device.deviceName.isEmpty ? "Bluetooth" : device.deviceName
-        case .Headphones, .Headset: return "Cuffie"
-        default: return device.deviceName.isEmpty ? "Audio" : device.deviceName
+        case .Speaker: "Vivavoce"
+        case .Earpiece: "Auricolare"
+        case .Bluetooth, .BluetoothA2DP: device.deviceName.isEmpty ? "Bluetooth" : device.deviceName
+        case .Headphones, .Headset: "Cuffie"
+        default: device.deviceName.isEmpty ? "Audio" : device.deviceName
         }
     }
 
-    nonisolated private static func audioIcon(_ device: AudioDevice) -> String {
+    private nonisolated static func audioIcon(_ device: AudioDevice) -> String {
         switch device.type {
-        case .Speaker: return "speaker.wave.3.fill"
-        case .Bluetooth, .BluetoothA2DP: return "airpodspro"
-        case .Headphones, .Headset: return "headphones"
-        default: return "phone.fill"
+        case .Speaker: "speaker.wave.3.fill"
+        case .Bluetooth, .BluetoothA2DP: "airpodspro"
+        case .Headphones, .Headset: "headphones"
+        default: "phone.fill"
         }
     }
 
@@ -594,7 +624,7 @@ final class WADSipManager: ObservableObject {
         self.sipQueue.async { self.refreshAudioOutputsOnQueue() }
     }
 
-    nonisolated private func refreshAudioOutputsOnQueue() {
+    private nonisolated func refreshAudioOutputsOnQueue() {
         guard let core = self.core else {
             Task { @MainActor in
                 if !self.audioOutputs.isEmpty { self.audioOutputs = [] }
@@ -605,8 +635,11 @@ final class WADSipManager: ObservableObject {
         let outs = core.audioDevices
             .filter { $0.hasCapability(capability: .CapabilityPlay) }
             .map {
-                AudioOutput(id: $0.id, name: Self.audioLabel($0),
-                            icon: Self.audioIcon($0), isSpeaker: $0.type == .Speaker)
+                AudioOutput(
+                    id: $0.id,
+                    name: Self.audioLabel($0),
+                    icon: Self.audioIcon($0),
+                    isSpeaker: $0.type == .Speaker)
             }
         let curId = (self.currentCall?.outputAudioDevice ?? core.outputAudioDevice)?.id ?? ""
         Task { @MainActor in
@@ -625,7 +658,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func setAudioOutputOnQueue(device: AudioDevice) {
+    private nonisolated func setAudioOutputOnQueue(device: AudioDevice) {
         guard let core = self.core else { return }
         if let call = self.currentCall { call.outputAudioDevice = device }
         core.outputAudioDevice = device
@@ -669,7 +702,9 @@ final class WADSipManager: ObservableObject {
                 try call.transferTo(referTo: address)
                 WADDeviceLog.shared.log("sip", "trasferimento verso \(num) inviato")
             } catch {
-                WADDeviceLog.shared.log("sip.error", "trasferimento verso \(num) fallito: \(error.localizedDescription)")
+                WADDeviceLog.shared.log(
+                    "sip.error",
+                    "trasferimento verso \(num) fallito: \(error.localizedDescription)")
                 Task { @MainActor in
                     self.error = "Trasferimento non riuscito: \(error.localizedDescription)"
                 }
@@ -738,7 +773,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func handleConsultStateOnQueue(state: Call.State, message: String) {
+    private nonisolated func handleConsultStateOnQueue(state: Call.State, message: String) {
         switch state {
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
             Task { @MainActor in self.consultState = .ringing }
@@ -809,7 +844,7 @@ final class WADSipManager: ObservableObject {
         }
     }
 
-    nonisolated private func handleConfStateOnQueue(state: Call.State, message: String) {
+    private nonisolated func handleConfStateOnQueue(state: Call.State, message: String) {
         switch state {
         case .OutgoingInit, .OutgoingProgress, .OutgoingRinging:
             Task { @MainActor in self.confState = .ringing }
@@ -972,8 +1007,12 @@ struct WADPhoneSheet: View {
 
     /// Tasto circolare con sola icona per i controlli in chiamata.
     /// `active` = stato attivo evidenziato (es. muto o vivavoce inseriti).
-    private func controlCircle(icon: String, label: String, active: Bool = false,
-                               action: @escaping () -> Void) -> some View {
+    private func controlCircle(
+        icon: String,
+        label: String,
+        active: Bool = false,
+        action: @escaping () -> Void) -> some View
+    {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 21, weight: .medium))
@@ -987,8 +1026,13 @@ struct WADPhoneSheet: View {
     }
 
     /// Tasto circolare pieno (verde/rosso) per rispondi, rifiuta, chiama, chiudi.
-    private func actionCircle(icon: String, tint: Color, size: CGFloat = 64, label: String,
-                              action: @escaping () -> Void) -> some View {
+    private func actionCircle(
+        icon: String,
+        tint: Color,
+        size: CGFloat = 64,
+        label: String,
+        action: @escaping () -> Void) -> some View
+    {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: size * 0.38, weight: .semibold))
@@ -1009,8 +1053,9 @@ struct WADPhoneSheet: View {
             Menu {
                 ForEach(self.phone.audioOutputs) { out in
                     Button { self.phone.setAudioOutput(id: out.id) } label: {
-                        Label(out.name,
-                              systemImage: out.id == self.phone.currentAudioOutputId ? "checkmark" : out.icon)
+                        Label(
+                            out.name,
+                            systemImage: out.id == self.phone.currentAudioOutputId ? "checkmark" : out.icon)
                     }
                 }
             } label: {
@@ -1026,8 +1071,7 @@ struct WADPhoneSheet: View {
             self.controlCircle(
                 icon: self.phone.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.wave.1.fill",
                 label: "Vivavoce",
-                active: self.phone.isSpeakerOn
-            ) { self.phone.toggleSpeaker() }
+                active: self.phone.isSpeakerOn) { self.phone.toggleSpeaker() }
         }
     }
 
@@ -1107,7 +1151,8 @@ struct WADPhoneSheet: View {
             if self.phone.callState == .ringingOut
                 || (self.phone.callState == .inCall
                     && !self.transferMode && !self.confMode
-                    && self.phone.consultState == .none && self.phone.confState == .none) {
+                    && self.phone.consultState == .none && self.phone.confState == .none)
+            {
                 self.actionCircle(icon: "phone.down.fill", tint: .red, size: 68, label: "Chiudi chiamata") {
                     self.phone.hangup()
                 }
@@ -1124,8 +1169,7 @@ struct WADPhoneSheet: View {
             self.controlCircle(
                 icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
                 label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
-                active: self.phone.muted
-            ) { self.phone.toggleMute() }
+                active: self.phone.muted) { self.phone.toggleMute() }
             self.audioCircle
         }
         .padding(.top, 8)
@@ -1138,8 +1182,7 @@ struct WADPhoneSheet: View {
             self.controlCircle(
                 icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
                 label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
-                active: self.phone.muted
-            ) { self.phone.toggleMute() }
+                active: self.phone.muted) { self.phone.toggleMute() }
             self.controlCircle(icon: "circle.grid.3x3.fill", label: "Tastierino") {
                 withAnimation(.easeInOut(duration: 0.15)) { self.showDtmfPad = true }
             }
@@ -1168,7 +1211,9 @@ struct WADPhoneSheet: View {
                         ForEach(self.matchInterni(self.transferNumber)) { contact in
                             Button { self.transferNumber = contact.ext } label: {
                                 HStack {
-                                    if let dot = Self.presenceColor(registered: contact.registered, busy: contact.busy) {
+                                    if let dot = Self
+                                        .presenceColor(registered: contact.registered, busy: contact.busy)
+                                    {
                                         Circle().fill(dot).frame(width: 8, height: 8)
                                     }
                                     Text(contact.name)
@@ -1256,7 +1301,9 @@ struct WADPhoneSheet: View {
                         ForEach(self.matchInterni(self.confNumber)) { contact in
                             Button { self.confNumber = contact.ext } label: {
                                 HStack {
-                                    if let dot = Self.presenceColor(registered: contact.registered, busy: contact.busy) {
+                                    if let dot = Self
+                                        .presenceColor(registered: contact.registered, busy: contact.busy)
+                                    {
                                         Circle().fill(dot).frame(width: 8, height: 8)
                                     }
                                     Text(contact.name)
@@ -1314,13 +1361,14 @@ struct WADPhoneSheet: View {
             HStack(spacing: 18) {
                 self.controlCircle(
                     icon: "person.fill.badge.minus",
-                    label: self.phone.confState == .active ? "Rimuovi partecipante" : "Annulla"
-                ) { self.phone.removeConfParticipant() }
+                    label: self.phone.confState == .active ? "Rimuovi partecipante" : "Annulla")
+                {
+                    self.phone.removeConfParticipant()
+                }
                 self.controlCircle(
                     icon: self.phone.muted ? "mic.slash.fill" : "mic.fill",
                     label: self.phone.muted ? "Riattiva microfono" : "Silenzia microfono",
-                    active: self.phone.muted
-                ) { self.phone.toggleMute() }
+                    active: self.phone.muted) { self.phone.toggleMute() }
                 self.actionCircle(icon: "phone.down.fill", tint: .red, size: 56, label: "Chiudi per tutti") {
                     self.phone.hangup()
                 }
@@ -1577,8 +1625,13 @@ struct WADPhoneSheet: View {
         }
     }
 
-    private func contactRow(name: String, subtitle: String, number: String?, dnd: Bool = false,
-                            presence: Color? = nil) -> some View {
+    private func contactRow(
+        name: String,
+        subtitle: String,
+        number: String?,
+        dnd: Bool = false,
+        presence: Color? = nil) -> some View
+    {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
@@ -1738,15 +1791,20 @@ struct WADPhoneSheet: View {
 
     /// Tastierino a tasti circolari stile Telefono iOS. Con `letters` mostra
     /// le lettere sotto le cifre (solo nel dialer, non nel DTMF in chiamata).
-    private func keypadGrid(letters: Bool = true, keySize: CGFloat = 74,
-                            action: @escaping (String) -> Void) -> some View {
+    private func keypadGrid(
+        letters: Bool = true,
+        keySize: CGFloat = 74,
+        action: @escaping (String) -> Void) -> some View
+    {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 12) {
             ForEach(Self.keys, id: \.self) { key in
                 Button { action(key) } label: {
                     VStack(spacing: 0) {
                         Text(key)
-                            .font(.system(size: key == "*" ? keySize * 0.5 : keySize * 0.42,
-                                          weight: .regular, design: .rounded))
+                            .font(.system(
+                                size: key == "*" ? keySize * 0.5 : keySize * 0.42,
+                                weight: .regular,
+                                design: .rounded))
                             .foregroundStyle(.primary)
                             .frame(height: keySize * 0.46)
                         if letters {

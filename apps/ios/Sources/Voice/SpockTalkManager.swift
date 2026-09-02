@@ -158,6 +158,7 @@ final class SpockTalkManager {
     }
 
     private func connect() async {
+        let connectStartedAt = Date()
         IanuaSessionStore.restoreIfNeeded()
         let granted = await Self.requestMicPermission()
         guard granted else {
@@ -179,6 +180,9 @@ final class SpockTalkManager {
             self.fail(mint.error ?? "Il server voce non ha restituito un token.")
             return
         }
+        WADDeviceLog.shared.log(
+            "talk.perf",
+            String(format: "sessione ottenuta in %.2fs", Date().timeIntervalSince(connectStartedAt)))
 
         var wsRequest = URLRequest(url: wsURL)
         wsRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
@@ -193,7 +197,11 @@ final class SpockTalkManager {
             return
         }
 
-        WADDeviceLog.shared.log("talk", "connesso: sessione realtime + audio avviati")
+        WADDeviceLog.shared.log(
+            "talk",
+            String(
+                format: "connesso: sessione realtime + audio avviati in %.2fs",
+                Date().timeIntervalSince(connectStartedAt)))
         self.phase = .listening
         self.receiveTask = Task { [weak self] in
             await self?.receiveLoop(task)
@@ -202,10 +210,10 @@ final class SpockTalkManager {
 
     private static func requestMicPermission() async -> Bool {
         switch AVAudioApplication.shared.recordPermission {
-        case .granted: return true
-        case .denied: return false
+        case .granted: true
+        case .denied: false
         default:
-            return await AVAudioApplication.requestRecordPermission()
+            await AVAudioApplication.requestRecordPermission()
         }
     }
 
@@ -336,8 +344,8 @@ final class SpockTalkManager {
             do {
                 let message = try await task.receive()
                 let text: String? = switch message {
-                case .string(let s): s
-                case .data(let d): String(data: d, encoding: .utf8)
+                case let .string(s): s
+                case let .data(d): String(data: d, encoding: .utf8)
                 @unknown default: nil
                 }
                 if let text { self.handleEvent(text) }
@@ -520,7 +528,11 @@ final class SpockTalkManager {
         }
         WADDeviceLog.shared.log(
             "talk.tool",
-            String(format: "%@ concluso in %.1fs (output %d char)", name, Date().timeIntervalSince(toolStart), output.count))
+            String(
+                format: "%@ concluso in %.1fs (output %d char)",
+                name,
+                Date().timeIntervalSince(toolStart),
+                output.count))
         // The long wait is over: stop the hold music and re-open the mic so
         // the user can react to the spoken answer right away.
         if name == "ask_spock" {
@@ -739,7 +751,10 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         }
 
         guard let playback = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else {
-            throw NSError(domain: "SpockTalk", code: 1, userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
+            throw NSError(
+                domain: "SpockTalk",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "formato playback non valido"])
         }
         self.playbackFormat = playback
         if !self.playerAttached {
@@ -768,10 +783,16 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
 
         let inputFormat = input.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw NSError(domain: "SpockTalk", code: 2, userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
+            throw NSError(
+                domain: "SpockTalk",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "formato microfono non valido"])
         }
         guard let sender = SpockMicSender(inputFormat: inputFormat, webSocket: webSocket) else {
-            throw NSError(domain: "SpockTalk", code: 3, userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
+            throw NSError(
+                domain: "SpockTalk",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "conversione audio non disponibile"])
         }
         sender.onLevel = onLevel
         sender.muted = self.micMuted
@@ -831,7 +852,9 @@ private final class SpockMicSender: @unchecked Sendable {
         if let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 {
             var sum: Float = 0
             let n = Int(buffer.frameLength)
-            for i in 0..<n { sum += channel[i] * channel[i] }
+            for i in 0..<n {
+                sum += channel[i] * channel[i]
+            }
             self.onLevel?(sqrtf(sum / Float(n)))
         }
 
