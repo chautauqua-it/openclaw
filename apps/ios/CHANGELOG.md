@@ -4,6 +4,8 @@
 
 Maintenance update for the current OpenClaw development release.
 
+- Restored the persisted Ianua session before every native API call so the SIP phone can register even when opened before chat.
+- Stabilized Ianua Realtime audio startup and route changes by suppressing self-generated CoreAudio rebuild loops.
 - Redesigned the Authenticator approval card: the action summary and match-code entry are front and center, while technical context (tenant, environment, audience, initiator device, request hash) moved into a collapsed Details section (build 93).
 - Tapping an Ianua "Sblocco richiesto" push now opens the Authenticator screen directly, including when the app is connected to the gateway and the push arrives as a local notification (build 90).
 - Rebranded the mobile app experience as Ianua, including app and extension display names, Ianua app icons, and the phone screen mark.

@@ -58,6 +58,8 @@ final class SpockTalkManager {
     private var pendingToolResponseCreate = false
     private var pendingSpockText = ""
     private var audioObservers: [NSObjectProtocol] = []
+    private var audioRebuildTask: Task<Void, Never>?
+    private var ignoreAudioConfigurationChangesUntil = Date.distantPast
 
     // Cost telemetry: only token counts + technical metadata are shipped to the
     // talk daemon, never transcript or audio.
@@ -87,6 +89,8 @@ final class SpockTalkManager {
         if self.isActive { WADDeviceLog.shared.log("talk", "stop modalità voce") }
         self.receiveTask?.cancel()
         self.receiveTask = nil
+        self.audioRebuildTask?.cancel()
+        self.audioRebuildTask = nil
         self.webSocket?.cancel(with: .normalClosure, reason: nil)
         self.webSocket = nil
         self.teardownAudio()
@@ -204,7 +208,6 @@ final class SpockTalkManager {
     // MARK: - Audio
 
     private func startAudio() async throws {
-        self.installAudioObservers()
         let webSocket = self.webSocket
         try await self.audio.start(
             webSocket: webSocket,
@@ -218,6 +221,10 @@ final class SpockTalkManager {
             onSpeechLevel: { [weak self] level in
                 Task { @MainActor in self?.applySpeechLevel(level) }
             })
+        // Costruire il grafo emette a sua volta configuration-change. Se
+        // l'observer è già attivo, il primo avvio accoda rebuild ricorsivi.
+        self.ignoreAudioConfigurationChangesUntil = Date().addingTimeInterval(1)
+        self.installAudioObservers()
     }
 
     /// Smoothing attacco-rapido/rilascio-lento del livello voce di Spock.
@@ -260,9 +267,10 @@ final class SpockTalkManager {
 
     private func handleEngineConfigurationChange() {
         guard self.isActive else { return }
+        guard Date() >= self.ignoreAudioConfigurationChangesUntil else { return }
         self.logger.info("audio engine configuration change; rebuilding graph")
         WADDeviceLog.shared.log("talk.audio", "config change → rebuild grafo")
-        self.rebuildAudioGraph(context: "cambio uscita audio")
+        self.scheduleAudioGraphRebuild(context: "cambio uscita audio")
     }
 
     private func handleInterruption(typeRaw: UInt?, optionsRaw: UInt) {
@@ -277,16 +285,19 @@ final class SpockTalkManager {
             guard self.isActive else { return }
             self.logger.info("audio session interruption ended (options \(optionsRaw))")
             WADDeviceLog.shared.log("talk.audio", "interruzione finita (options \(optionsRaw)) → rebuild")
-            self.rebuildAudioGraph(context: "ripresa dopo interruzione", reactivateSession: true)
+            self.scheduleAudioGraphRebuild(context: "ripresa dopo interruzione", reactivateSession: true)
         @unknown default:
             break
         }
     }
 
-    private func rebuildAudioGraph(context: String, reactivateSession: Bool = false) {
-        let webSocket = self.webSocket
-        Task { [weak self] in
-            guard let self else { return }
+    private func scheduleAudioGraphRebuild(context: String, reactivateSession: Bool = false) {
+        self.audioRebuildTask?.cancel()
+        self.audioRebuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self, self.isActive else { return }
+            let webSocket = self.webSocket
+            self.ignoreAudioConfigurationChangesUntil = Date().addingTimeInterval(1)
             do {
                 try await self.audio.rebuild(
                     webSocket: webSocket,
@@ -301,9 +312,11 @@ final class SpockTalkManager {
                     onSpeechLevel: { [weak self] level in
                         Task { @MainActor in self?.applySpeechLevel(level) }
                     })
+                self.ignoreAudioConfigurationChangesUntil = Date().addingTimeInterval(1)
             } catch {
                 self.fail("Audio interrotto (\(context)): \(error.localizedDescription)")
             }
+            self.audioRebuildTask = nil
         }
     }
 

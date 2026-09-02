@@ -106,6 +106,10 @@ actor WADAPIClient {
     }
 
     private func request(_ path: String, options: WADRequestOptions = WADRequestOptions()) async throws -> Data {
+        // Il telefono SIP e le altre superfici native possono essere aperti
+        // prima della chat. Ripristina quindi la sessione anche qui, invece di
+        // dipendere dal lifecycle della chat/authenticator.
+        IanuaSessionStore.restoreIfNeeded()
         let url = try self.makeURL(path)
         var request = URLRequest(url: url)
         request.httpMethod = options.method
