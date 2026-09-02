@@ -9,31 +9,30 @@ struct AuthenticatorApprovalView: View {
     let onCancel: () -> Void
 
     @State private var enteredCode = ""
+    @State private var showsDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Conferma azione critica")
-                .font(.headline)
-            Text("Il telefono può solo approvare o negare una richiesta già avviata da un altro dispositivo.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 7) {
-                self.row("Target", self.challenge.target)
-                self.row("Azione", self.challenge.action.actionId)
-                self.row("Parametri", self.challenge.parameterSummary)
-                self.row("Tenant", self.challenge.action.tenant)
-                self.row("Ambiente", self.challenge.action.environment)
-                self.row("Audience", self.challenge.action.audience)
-                self.row("Dispositivo iniziatore", self.challenge.initiatorDeviceId)
-                self.row("Hash richiesta", self.challenge.action.requestHash)
+        VStack(spacing: 18) {
+            VStack(spacing: 6) {
+                Image(systemName: "faceid")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.tint)
+                Text(self.challenge.parameterSummary)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Text(self.challenge.target)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
 
             TextField("Codice di \(self.challenge.matchCodeDigits) cifre", text: self.$enteredCode)
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
                 .multilineTextAlignment(.center)
-                .font(.system(.title2, design: .monospaced).weight(.semibold))
+                .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
+                .padding(.vertical, 10)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                 .onChange(of: self.enteredCode) { _, value in
                     self.enteredCode = String(value.filter(\.isNumber).prefix(self.challenge.matchCodeDigits))
                 }
@@ -49,6 +48,7 @@ struct AuthenticatorApprovalView: View {
 
             Button("Approva") { self.onApprove(self.enteredCode) }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .frame(maxWidth: .infinity)
                 .disabled(!self.canResolve)
 
@@ -61,6 +61,25 @@ struct AuthenticatorApprovalView: View {
                     .disabled(self.isResolving)
             }
             .frame(maxWidth: .infinity)
+
+            DisclosureGroup("Dettagli", isExpanded: self.$showsDetails) {
+                VStack(alignment: .leading, spacing: 7) {
+                    self.row("Azione", self.challenge.action.actionId)
+                    self.row("Tenant", self.challenge.action.tenant)
+                    self.row("Ambiente", self.challenge.action.environment)
+                    self.row("Audience", self.challenge.action.audience)
+                    self.row("Dispositivo iniziatore", self.challenge.initiatorDeviceId)
+                    self.row("Hash richiesta", self.challenge.action.requestHash)
+                    Text("Il telefono può solo approvare o negare una richiesta già avviata da un altro dispositivo.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
         .statusGlassCard(brighten: false, verticalPadding: 18, horizontalPadding: 18)
     }
