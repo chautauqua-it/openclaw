@@ -4,7 +4,7 @@
 
 Maintenance update for the current OpenClaw development release.
 
-- Tapping an Ianua "Sblocco richiesto" push now opens the Authenticator screen directly (build 89).
+- Tapping an Ianua "Sblocco richiesto" push now opens the Authenticator screen directly, including when the app is connected to the gateway and the push arrives as a local notification (build 90).
 - Rebranded the mobile app experience as Ianua, including app and extension display names, Ianua app icons, and the phone screen mark.
 - Added presence status in the native Linphone phonebook: registered and free, not registered, busy, and DND.
 - Added the complete native Iànua chat, including direct conversations with tenant colleagues, agents, channels, groups, replies, reactions, pins, attachments, voice messages, and protected secrets.
