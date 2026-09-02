@@ -69,8 +69,16 @@ android {
     versionName = "2026.4.27"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     ndk {
-      // Support all major ABIs — native libs are tiny (~47 KB per ABI)
-      abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+      // Support all major ABIs by default; OPENCLAW_ANDROID_ABI narrows the set for
+      // single-device internal builds (linphone-sdk ships large native libs per ABI).
+      val abiOverride =
+        providers
+          .gradleProperty("OPENCLAW_ANDROID_ABI")
+          .orNull
+          ?.split(",")
+          ?.map(String::trim)
+          ?.filter(String::isNotEmpty)
+      abiFilters += abiOverride ?: listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
     }
   }
 
