@@ -2,6 +2,7 @@ package ai.openclaw.app.ui
 
 import ai.openclaw.app.NodeApp
 import ai.openclaw.app.sip.SipCallStatus
+import ai.openclaw.app.sip.SipForegroundService
 import ai.openclaw.app.sip.SipRegistrationStatus
 import android.Manifest
 import android.content.pm.PackageManager
@@ -74,6 +75,12 @@ fun PhoneTabScreen() {
   LaunchedEffect(Unit) {
     if (app.wadApi.hasSession() && state.status == SipRegistrationStatus.Idle) {
       manager.registerFromExistingSession()
+    }
+  }
+
+  LaunchedEffect(state.status) {
+    if (state.status == SipRegistrationStatus.Registered) {
+      SipForegroundService.start(context)
     }
   }
 
