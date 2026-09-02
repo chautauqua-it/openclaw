@@ -6,10 +6,10 @@ import UIKit
 
 /// Realtime voice conversation with the Spock agent.
 ///
-/// The app asks the Mac mini talk daemon (Tailscale-only) for a short-lived
-/// OpenAI Realtime client secret, then streams PCM16 24 kHz audio directly to
-/// OpenAI over WebSocket. Tool calls are proxied back to the daemon, so no
-/// long-lived API key ever reaches the device.
+/// The app asks the authenticated Iànua gateway for a short-lived OpenAI
+/// Realtime client secret, then streams PCM16 24 kHz audio directly to OpenAI
+/// over WebSocket. Tool calls are proxied through the same gateway to the
+/// private daemon, so no long-lived API key ever reaches the device.
 @MainActor
 @Observable
 final class SpockTalkManager {
@@ -44,7 +44,7 @@ final class SpockTalkManager {
         }
     }
 
-    static let defaultServerURL = "https://mac-mini-di-stefano.tail1e9216.ts.net:40812"
+    static let defaultServerURL = "https://ianua.differen.it/api/mobile/realtime"
 
     /// Istanza per CarPlay: la scena auto vive fuori dalla gerarchia SwiftUI e
     /// deve poter avviare/fermare la stessa sessione voce da più connessioni.
@@ -68,7 +68,10 @@ final class SpockTalkManager {
     private var sessionModel = "gpt-realtime"
 
     private var serverBaseURL: URL {
-        let raw = UserDefaults.standard.string(forKey: "spockTalk.serverURL") ?? Self.defaultServerURL
+        let saved = UserDefaults.standard.string(forKey: "spockTalk.serverURL")
+        // Migrazione dalle build pilot: l'override Tailscale salvato non deve
+        // continuare a rendere il servizio irraggiungibile fuori dalla VPN.
+        let raw = saved?.contains(".ts.net") == false ? saved! : Self.defaultServerURL
         return URL(string: raw) ?? URL(string: Self.defaultServerURL)!
     }
 
@@ -155,6 +158,7 @@ final class SpockTalkManager {
     }
 
     private func connect() async {
+        IanuaSessionStore.restoreIfNeeded()
         let granted = await Self.requestMicPermission()
         guard granted else {
             self.fail("Permesso microfono negato: abilitalo in Impostazioni.")
@@ -168,7 +172,7 @@ final class SpockTalkManager {
             let (data, _) = try await URLSession.shared.data(for: request)
             mint = try JSONDecoder().decode(MintResponse.self, from: data)
         } catch {
-            self.fail("Server voce non raggiungibile (Tailscale attivo?): \(error.localizedDescription)")
+            self.fail("Servizio Iànua Realtime non raggiungibile: \(error.localizedDescription)")
             return
         }
         guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw) else {

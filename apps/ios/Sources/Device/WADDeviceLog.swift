@@ -59,8 +59,10 @@ final class WADDeviceLog: @unchecked Sendable {
     }
 
     private var serverBaseURL: URL? {
-        let raw = UserDefaults.standard.string(forKey: "spockTalk.serverURL")
-            ?? "https://mac-mini-di-stefano.tail1e9216.ts.net:40812"
+        let saved = UserDefaults.standard.string(forKey: "spockTalk.serverURL")
+        let raw = saved?.contains(".ts.net") == false
+            ? saved!
+            : "https://ianua.differen.it/api/mobile/realtime"
         return URL(string: raw)
     }
 
@@ -185,6 +187,7 @@ final class WADDeviceLog: @unchecked Sendable {
 
     private func flushLocked() {
         guard self.inFlightCount == 0, !self.pending.isEmpty, let base = self.serverBaseURL else { return }
+        IanuaSessionStore.restoreIfNeeded()
         let batch = self.pending
         self.inFlightCount = batch.count
         var request = URLRequest(url: base.appendingPathComponent("devlog"))
