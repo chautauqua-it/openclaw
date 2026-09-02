@@ -49,7 +49,6 @@ Sources/Push/PushRelayClient.swift
 Sources/Push/PushRelayKeychainStore.swift
 Sources/Reminders/RemindersService.swift
 Sources/RootCanvas.swift
-Sources/RootTabs.swift
 Sources/RootView.swift
 Sources/Screen/ScreenController.swift
 Sources/Screen/ScreenRecordService.swift

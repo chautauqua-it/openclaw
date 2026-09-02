@@ -4,7 +4,7 @@ import Testing
 import UIKit
 @testable import OpenClaw
 
-@Suite struct SwiftUIRenderSmokeTests {
+struct SwiftUIRenderSmokeTests {
     @MainActor private static func host(_ view: some View) -> UIWindow {
         let window = UIWindow(frame: UIScreen.main.bounds)
         window.rootViewController = UIHostingController(rootView: view)
@@ -14,17 +14,17 @@ import UIKit
         return window
     }
 
-    @Test @MainActor func statusPillConnectingBuildsAViewHierarchy() {
+    @Test @MainActor func `status pill connecting builds A view hierarchy`() {
         let root = StatusPill(gateway: .connecting, voiceWakeEnabled: true, brighten: true) {}
         _ = Self.host(root)
     }
 
-    @Test @MainActor func statusPillDisconnectedBuildsAViewHierarchy() {
+    @Test @MainActor func `status pill disconnected builds A view hierarchy`() {
         let root = StatusPill(gateway: .disconnected, voiceWakeEnabled: false) {}
         _ = Self.host(root)
     }
 
-    @Test @MainActor func settingsTabBuildsAViewHierarchy() {
+    @Test @MainActor func `settings tab builds A view hierarchy`() {
         let appModel = NodeAppModel()
         let gatewayController = GatewayConnectionController(appModel: appModel, startDiscovery: false)
 
@@ -36,11 +36,11 @@ import UIKit
         _ = Self.host(root)
     }
 
-    @Test @MainActor func rootTabsBuildAViewHierarchy() {
+    @Test @MainActor func `root canvas builds A view hierarchy`() {
         let appModel = NodeAppModel()
         let gatewayController = GatewayConnectionController(appModel: appModel, startDiscovery: false)
 
-        let root = RootTabs()
+        let root = RootCanvas()
             .environment(appModel)
             .environment(appModel.voiceWake)
             .environment(gatewayController)
@@ -48,7 +48,7 @@ import UIKit
         _ = Self.host(root)
     }
 
-    @Test @MainActor func voiceTabBuildsAViewHierarchy() {
+    @Test @MainActor func `voice tab builds A view hierarchy`() {
         let appModel = NodeAppModel()
 
         let root = VoiceTab()
@@ -58,14 +58,14 @@ import UIKit
         _ = Self.host(root)
     }
 
-    @Test @MainActor func voiceWakeWordsViewBuildsAViewHierarchy() {
+    @Test @MainActor func `voice wake words view builds A view hierarchy`() {
         let appModel = NodeAppModel()
         let root = NavigationStack { VoiceWakeWordsSettingsView() }
             .environment(appModel)
         _ = Self.host(root)
     }
 
-    @Test @MainActor func chatSheetBuildsAViewHierarchy() {
+    @Test @MainActor func `chat sheet builds A view hierarchy`() {
         let appModel = NodeAppModel()
         let gateway = GatewayNodeSession()
         let root = ChatSheet(gateway: gateway, sessionKey: "test")
@@ -74,7 +74,7 @@ import UIKit
         _ = Self.host(root)
     }
 
-    @Test @MainActor func voiceWakeToastBuildsAViewHierarchy() {
+    @Test @MainActor func `voice wake toast builds A view hierarchy`() {
         let root = VoiceWakeToast(command: "openclaw: do something")
         _ = Self.host(root)
     }

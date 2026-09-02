@@ -27,6 +27,7 @@ struct RootCanvas: View {
     @State private var didAutoOpenSettings: Bool = false
     @State private var wadSiriLaunchSignal = WADSiriLaunchSignal.shared
     @State private var showSpockTalk: Bool = false
+    @State private var authenticatorPresentation = AuthenticatorPresentation.shared
 
     private enum PresentedSheet: Identifiable {
         case wadChat
@@ -90,7 +91,8 @@ struct RootCanvas: View {
         return discoveredGatewayCount > 0
     }
 
-    var body: some View {
+    /// Split dalla body: la catena unica superava il budget del type-checker.
+    private var canvasWithPresentations: some View {
         ZStack {
             CanvasContent(
                 systemColorScheme: self.systemColorScheme,
@@ -147,6 +149,13 @@ struct RootCanvas: View {
                 WADPhoneSheet()
             }
         }
+        .sheet(isPresented: self.$authenticatorPresentation.isPresented) {
+            NavigationStack { AuthenticatorScreen() }
+        }
+        .onChange(of: self.authenticatorPresentation.isPresented) { _, newValue in
+            guard newValue else { return }
+            self.dismissConflictsForAuthenticator()
+        }
         .fullScreenCover(isPresented: self.$showSpockTalk) {
             SpockTalkView(accent: self.appModel.seamColor)
                 .environment(self.appModel)
@@ -161,97 +170,101 @@ struct RootCanvas: View {
                 .environment(self.appModel.voiceWake)
                 .environment(self.gatewayController)
         }
-        .onAppear {
-            // TEMP repro hook: auto-open Spock talk (bypasses onboarding/quick setup).
-            if ProcessInfo.processInfo.environment["SPOCK_TALK_AUTOOPEN"] == "1" {
-                self.didEvaluateOnboarding = true
-                self.didAutoOpenSettings = true
-                self.quickSetupDismissed = true
-                self.showSpockTalk = true
-            }
-        }
-        .onAppear { self.updateIdleTimer() }
-        .onAppear { self.updateHomeCanvasState() }
-        .onAppear { self.evaluateOnboardingPresentation(force: false) }
-        .onAppear { self.maybeAutoOpenSettings() }
-        .onAppear { self.presentPendingWADSiriRoute() }
-        .onChange(of: self.preventSleep) { _, _ in self.updateIdleTimer() }
-        .onChange(of: self.scenePhase) { _, newValue in
-            self.updateIdleTimer()
-            self.updateHomeCanvasState()
-            guard newValue == .active else { return }
-            Task {
-                await self.appModel.refreshGatewayOverviewIfConnected()
-                await MainActor.run {
-                    self.updateHomeCanvasState()
+    }
+
+    var body: some View {
+        self.canvasWithPresentations
+            .onAppear {
+                // TEMP repro hook: auto-open Spock talk (bypasses onboarding/quick setup).
+                if ProcessInfo.processInfo.environment["SPOCK_TALK_AUTOOPEN"] == "1" {
+                    self.didEvaluateOnboarding = true
+                    self.didAutoOpenSettings = true
+                    self.quickSetupDismissed = true
+                    self.showSpockTalk = true
                 }
             }
-        }
-        .onAppear { self.maybeShowQuickSetup() }
-        .onChange(of: self.gatewayController.gateways.count) { _, _ in self.maybeShowQuickSetup() }
-        .onAppear { self.updateCanvasDebugStatus() }
-        .onChange(of: self.canvasDebugStatusEnabled) { _, _ in self.updateCanvasDebugStatus() }
-        .onChange(of: self.appModel.gatewayStatusText) { _, _ in
-            self.updateCanvasDebugStatus()
-            self.updateHomeCanvasState()
-        }
-        .onChange(of: self.appModel.gatewayServerName) { _, _ in
-            self.updateCanvasDebugStatus()
-            self.updateHomeCanvasState()
-        }
-        .onChange(of: self.appModel.gatewayServerName) { _, newValue in
-            if newValue != nil {
-                self.showOnboarding = false
-            }
-        }
-        .onChange(of: self.onboardingRequestID) { _, _ in
-            self.evaluateOnboardingPresentation(force: true)
-        }
-        .onChange(of: self.appModel.gatewayRemoteAddress) { _, _ in
-            self.updateCanvasDebugStatus()
-            self.updateHomeCanvasState()
-        }
-        .onChange(of: self.appModel.homeCanvasRevision) { _, _ in
-            self.updateHomeCanvasState()
-        }
-        .onChange(of: self.appModel.gatewayServerName) { _, newValue in
-            if newValue != nil {
-                self.onboardingComplete = true
-                self.hasConnectedOnce = true
-                OnboardingStateStore.markCompleted(mode: nil)
-            }
-            self.maybeAutoOpenSettings()
-        }
-        .onChange(of: self.appModel.openChatRequestID) { _, _ in
-            self.presentedSheet = .agents
-        }
-        .onChange(of: self.wadSiriLaunchSignal.activationToken) { _, _ in
-            self.presentPendingWADSiriRoute()
-        }
-        .onChange(of: self.voiceWake.lastTriggeredCommand) { _, newValue in
-            guard let newValue else { return }
-            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-
-            self.toastDismissTask?.cancel()
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                self.voiceWakeToastText = trimmed
-            }
-
-            self.toastDismissTask = Task {
-                try? await Task.sleep(nanoseconds: 2_300_000_000)
-                await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        self.voiceWakeToastText = nil
+            .onAppear { self.updateIdleTimer() }
+            .onAppear { self.updateHomeCanvasState() }
+            .onAppear { self.evaluateOnboardingPresentation(force: false) }
+            .onAppear { self.maybeAutoOpenSettings() }
+            .onAppear { self.presentPendingWADSiriRoute() }
+            .onChange(of: self.preventSleep) { _, _ in self.updateIdleTimer() }
+            .onChange(of: self.scenePhase) { _, newValue in
+                self.updateIdleTimer()
+                self.updateHomeCanvasState()
+                guard newValue == .active else { return }
+                Task {
+                    await self.appModel.refreshGatewayOverviewIfConnected()
+                    await MainActor.run {
+                        self.updateHomeCanvasState()
                     }
                 }
             }
-        }
-        .onDisappear {
-            UIApplication.shared.isIdleTimerDisabled = false
-            self.toastDismissTask?.cancel()
-            self.toastDismissTask = nil
-        }
+            .onAppear { self.maybeShowQuickSetup() }
+            .onChange(of: self.gatewayController.gateways.count) { _, _ in self.maybeShowQuickSetup() }
+            .onAppear { self.updateCanvasDebugStatus() }
+            .onChange(of: self.canvasDebugStatusEnabled) { _, _ in self.updateCanvasDebugStatus() }
+            .onChange(of: self.appModel.gatewayStatusText) { _, _ in
+                self.updateCanvasDebugStatus()
+                self.updateHomeCanvasState()
+            }
+            .onChange(of: self.appModel.gatewayServerName) { _, _ in
+                self.updateCanvasDebugStatus()
+                self.updateHomeCanvasState()
+            }
+            .onChange(of: self.appModel.gatewayServerName) { _, newValue in
+                if newValue != nil {
+                    self.showOnboarding = false
+                }
+            }
+            .onChange(of: self.onboardingRequestID) { _, _ in
+                self.evaluateOnboardingPresentation(force: true)
+            }
+            .onChange(of: self.appModel.gatewayRemoteAddress) { _, _ in
+                self.updateCanvasDebugStatus()
+                self.updateHomeCanvasState()
+            }
+            .onChange(of: self.appModel.homeCanvasRevision) { _, _ in
+                self.updateHomeCanvasState()
+            }
+            .onChange(of: self.appModel.gatewayServerName) { _, newValue in
+                if newValue != nil {
+                    self.onboardingComplete = true
+                    self.hasConnectedOnce = true
+                    OnboardingStateStore.markCompleted(mode: nil)
+                }
+                self.maybeAutoOpenSettings()
+            }
+            .onChange(of: self.appModel.openChatRequestID) { _, _ in
+                self.presentedSheet = .agents
+            }
+            .onChange(of: self.wadSiriLaunchSignal.activationToken) { _, _ in
+                self.presentPendingWADSiriRoute()
+            }
+            .onChange(of: self.voiceWake.lastTriggeredCommand) { _, newValue in
+                guard let newValue else { return }
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+
+                self.toastDismissTask?.cancel()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                    self.voiceWakeToastText = trimmed
+                }
+
+                self.toastDismissTask = Task {
+                    try? await Task.sleep(nanoseconds: 2_300_000_000)
+                    await MainActor.run {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            self.voiceWakeToastText = nil
+                        }
+                    }
+                }
+            }
+            .onDisappear {
+                UIApplication.shared.isIdleTimerDisabled = false
+                self.toastDismissTask?.cancel()
+                self.toastDismissTask = nil
+            }
     }
 
     private var gatewayStatus: StatusPill.GatewayState {
@@ -272,6 +285,18 @@ struct RootCanvas: View {
 
     private func openWADChannels() {
         self.presentedSheet = .wadChat
+    }
+
+    private func dismissConflictsForAuthenticator() {
+        guard self.presentedSheet != nil || self.showSpockTalk else { return }
+        self.presentedSheet = nil
+        self.showSpockTalk = false
+        // SwiftUI non presenta una sheet mentre un'altra è in dismissione:
+        // ri-arma la presentazione dopo l'animazione di chiusura.
+        self.authenticatorPresentation.isPresented = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            self.authenticatorPresentation.isPresented = true
+        }
     }
 
     private func presentPendingWADSiriRoute() {
