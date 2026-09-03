@@ -18,7 +18,7 @@ struct AuthenticatorApprovalView: View {
                     .font(.system(size: 30))
                     .foregroundStyle(.tint)
                 Text(self.challenge.parameterSummary)
-                    .font(.headline)
+                    .font(.subheadline.weight(.medium))
                     .multilineTextAlignment(.center)
                 Text(self.challenge.target)
                     .font(.footnote)
