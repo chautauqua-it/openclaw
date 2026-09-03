@@ -1,5 +1,6 @@
 Maintenance update for the current OpenClaw development release.
 
+- Reduced the Authenticator action-summary font for a more compact two-digit approval card.
 - Restored the native Iànua SIP contract so the phone can retrieve its configuration and DND state through the authenticated mobile routes.
 - Restored the tenant-bound internal directory and suppressed false “call failed” banners after a SIP call had already connected successfully.
 - Routed Iànua Realtime through the authenticated public Iànua gateway, removing the iPhone dependency on a private Tailscale route.
