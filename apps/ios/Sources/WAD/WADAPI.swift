@@ -47,6 +47,26 @@ enum IanuaPublicEndpointPolicy {
     }
 }
 
+enum IanuaRealtimeEndpointPolicy {
+    static let canonicalBaseURL = "https://ianua.differen.it/api/mobile/realtime"
+
+    static func resolvedBaseURL(_ persistedValue: String?) -> String {
+        guard let raw = persistedValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw == self.canonicalBaseURL
+        else { return self.canonicalBaseURL }
+        return raw
+    }
+}
+
+enum IanuaRealtimeHTTPPolicy {
+    static func errorMessage(statusCode: Int, data: Data) -> String? {
+        guard !(200...299).contains(statusCode) else { return nil }
+        if statusCode == 401 { return IanuaSessionStore.expiredMessage }
+        let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+        return message ?? "Errore Iànua Realtime \(statusCode)."
+    }
+}
+
 struct WADRequestOptions: @unchecked Sendable {
     let method: String
     let json: WADJSON?
@@ -132,6 +152,7 @@ actor WADAPIClient {
                     let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
                     throw WADAPIError.server(message ?? "Credenziali non valide")
                 }
+                IanuaSessionStore.clear()
                 throw WADAPIError.unauthorized
             }
             if !(200...299).contains(http.statusCode) {

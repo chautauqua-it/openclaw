@@ -69,9 +69,9 @@ final class SpockTalkManager {
 
     private var serverBaseURL: URL {
         let saved = UserDefaults.standard.string(forKey: "spockTalk.serverURL")
-        // Migrazione dalle build pilot: l'override Tailscale salvato non deve
-        // continuare a rendere il servizio irraggiungibile fuori dalla VPN.
-        let raw = saved?.contains(".ts.net") == false ? saved! : Self.defaultServerURL
+        // Le build pilot potevano conservare override loopback, LAN o tailnet.
+        // La app distribuita usa esclusivamente il gateway pubblico canonico.
+        let raw = IanuaRealtimeEndpointPolicy.resolvedBaseURL(saved)
         return URL(string: raw) ?? URL(string: Self.defaultServerURL)!
     }
 
@@ -170,7 +170,16 @@ final class SpockTalkManager {
             var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("session"))
             request.httpMethod = "POST"
             request.timeoutInterval = 12
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                self.fail("Risposta Iànua Realtime non valida.")
+                return
+            }
+            if let message = IanuaRealtimeHTTPPolicy.errorMessage(statusCode: http.statusCode, data: data) {
+                if http.statusCode == 401 { IanuaSessionStore.clear() }
+                self.fail(message)
+                return
+            }
             mint = try JSONDecoder().decode(MintResponse.self, from: data)
         } catch {
             self.fail("Servizio Iànua Realtime non raggiungibile: \(error.localizedDescription)")
