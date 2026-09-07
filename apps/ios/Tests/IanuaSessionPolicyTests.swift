@@ -21,6 +21,12 @@ import Testing
         #expect(
             IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 401, data: data) ==
                 IanuaSessionStore.expiredMessage)
+        #expect(
+            IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 403, data: data) ==
+                IanuaSessionStore.expiredMessage)
+        #expect(IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 401))
+        #expect(IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 403))
+        #expect(!IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 500))
         #expect(IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 200, data: data) == nil)
     }
 
