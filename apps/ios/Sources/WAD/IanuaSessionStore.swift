@@ -15,6 +15,8 @@ enum IanuaSessionStore {
     private static let cookieDomain = "ianua.differen.it"
     private static let cookieNames = ["ianua_session", "ianua_members"]
 
+    static let expiredMessage = "Sessione scaduta. Apri Chat ed esegui nuovamente il login."
+
     private struct StoredCookie: Codable {
         var name: String
         var value: String
@@ -62,9 +64,15 @@ enum IanuaSessionStore {
         self.loadValidCookies().contains { $0.name == "ianua_session" }
     }
 
-    /// Rimuove la copia Keychain. Da chiamare al logout o su 401 definitivo.
+    /// Rimuove sia la copia Keychain sia i cookie condivisi. Su un 401 il
+    /// server ha già revocato il token: lasciarlo nel cookie jar farebbe
+    /// continuare Chat, Telefono e Realtime a inviarlo fino al prossimo login.
     static func clear() {
         KeychainStore.delete(service: self.service, account: self.account)
+        let jar = HTTPCookieStorage.shared
+        (jar.cookies ?? [])
+            .filter { self.cookieNames.contains($0.name) && $0.domain.contains(self.cookieDomain) }
+            .forEach(jar.deleteCookie)
     }
 
     private static func loadValidCookies() -> [HTTPCookie] {

@@ -195,8 +195,11 @@ private actor IanuaChatAPI {
                     continue
                 }
                 let message = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
-                throw http.statusCode == 401 ? WADAPIError.unauthorized : WADAPIError
-                    .server(message ?? "Errore Iànua \(http.statusCode)")
+                if http.statusCode == 401 {
+                    IanuaSessionStore.clear()
+                    throw WADAPIError.unauthorized
+                }
+                throw WADAPIError.server(message ?? "Errore Iànua \(http.statusCode)")
             } catch let error as URLError
                 where attempt + 1 < attempts && retryableURLErrors.contains(error.code) && !Task.isCancelled
             {
@@ -256,8 +259,6 @@ private actor IanuaChatAPI {
     /// best-effort: anche se il server è irraggiungibile, localmente usciamo.
     func logout() async {
         _ = try? await self.call("/api/logout", method: "POST", json: [:])
-        HTTPCookieStorage.shared.cookies?.filter { $0.domain.contains("ianua.differen.it") }
-            .forEach(HTTPCookieStorage.shared.deleteCookie)
         IanuaSessionStore.clear()
     }
 

@@ -60,9 +60,7 @@ final class WADDeviceLog: @unchecked Sendable {
 
     private var serverBaseURL: URL? {
         let saved = UserDefaults.standard.string(forKey: "spockTalk.serverURL")
-        let raw = saved?.contains(".ts.net") == false
-            ? saved!
-            : "https://ianua.differen.it/api/mobile/realtime"
+        let raw = IanuaRealtimeEndpointPolicy.resolvedBaseURL(saved)
         return URL(string: raw)
     }
 

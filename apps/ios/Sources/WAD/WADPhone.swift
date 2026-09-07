@@ -32,6 +32,7 @@ final class WADSipManager: ObservableObject {
     }
 
     @Published var configured = false
+    @Published var authenticationRequired = false
     @Published var registered = false
     @Published var callState: CallState = .idle
     @Published var remote = ""
@@ -103,6 +104,12 @@ final class WADSipManager: ObservableObject {
         let config: WADSipConfig
         do {
             config = try await WADAPIClient.shared.sipConfig()
+            self.authenticationRequired = false
+        } catch WADAPIError.unauthorized {
+            self.configured = false
+            self.authenticationRequired = true
+            self.error = IanuaSessionStore.expiredMessage
+            return
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? "Config SIP non raggiungibile"
             return
@@ -1084,7 +1091,9 @@ struct WADPhoneSheet: View {
                 ? "Non disturbare attivo sul centralino"
                 : (self.phone.registered
                     ? "Interno \(self.phone.ext) registrato"
-                    : (self.phone.configured ? "Registrazione in corso..." : "Telefono non configurato")))
+                    : (self.phone.authenticationRequired
+                        ? "Accesso Iànua richiesto"
+                        : (self.phone.configured ? "Registrazione in corso..." : "Telefono non configurato"))))
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(self.phone.dnd ? Color.orange : Color.secondary)
         }
