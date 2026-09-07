@@ -569,7 +569,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
     private var musicAttached = false
     private var musicActive = false
     private var micMuted = false
-    private var tapInstalled = false
+    private let tapLifecycle = SpockTalkAudioTapLifecycle()
     private var voiceProcessingEnabled = false
     private var micSender: SpockMicSender?
     private var playbackFormat: AVAudioFormat?
@@ -765,7 +765,9 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         // VU meter KITT: livello RMS dell'audio di Spock mentre suona. Il tap
         // continua a girare anche a player fermo (silenzio) → il livello decade
         // naturalmente a zero senza timer lato UI.
-        self.player.removeTap(onBus: 0)
+        self.tapLifecycle.preparePlayerTapForInstall {
+            self.player.removeTap(onBus: 0)
+        }
         self.player.installTap(onBus: 0, bufferSize: 1024, format: playback) { buffer, _ in
             guard let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
             var sum: Float = 0
@@ -775,6 +777,7 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
             }
             onSpeechLevel(sqrtf(sum / Float(buffer.frameLength)))
         }
+        self.tapLifecycle.didInstallPlayerTap()
         if !self.musicAttached {
             self.engine.attach(self.musicPlayer)
             self.musicAttached = true
@@ -797,11 +800,13 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         sender.onLevel = onLevel
         sender.muted = self.micMuted
         self.micSender = sender
-        input.removeTap(onBus: 0)
+        self.tapLifecycle.prepareInputTapForInstall {
+            input.removeTap(onBus: 0)
+        }
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
             sender.handle(buffer)
         }
-        self.tapInstalled = true
+        self.tapLifecycle.didInstallInputTap()
 
         self.engine.prepare()
         try self.engine.start()
@@ -810,15 +815,52 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
     }
 
     private func detachGraphLocked() {
-        if self.tapInstalled {
+        self.tapLifecycle.removeInputTapIfInstalled {
             self.engine.inputNode.removeTap(onBus: 0)
-            self.tapInstalled = false
         }
         self.micSender = nil
-        self.player.removeTap(onBus: 0)
+        self.tapLifecycle.removePlayerTapIfInstalled {
+            self.player.removeTap(onBus: 0)
+        }
         if self.player.isPlaying { self.player.stop() }
         if self.musicPlayer.isPlaying { self.musicPlayer.stop() }
         if self.engine.isRunning { self.engine.stop() }
+    }
+}
+
+/// Tracks AVAudioNode taps because AVAudioNode has no safe query API and
+/// removeTap(onBus:) raises an Objective-C exception when no tap exists.
+/// All calls are serialized by SpockTalkAudioPipeline.queue.
+final class SpockTalkAudioTapLifecycle: @unchecked Sendable {
+    private var inputTapInstalled = false
+    private var playerTapInstalled = false
+
+    func prepareInputTapForInstall(remove: () -> Void) {
+        self.removeInputTapIfInstalled(remove: remove)
+    }
+
+    func didInstallInputTap() {
+        self.inputTapInstalled = true
+    }
+
+    func removeInputTapIfInstalled(remove: () -> Void) {
+        guard self.inputTapInstalled else { return }
+        remove()
+        self.inputTapInstalled = false
+    }
+
+    func preparePlayerTapForInstall(remove: () -> Void) {
+        self.removePlayerTapIfInstalled(remove: remove)
+    }
+
+    func didInstallPlayerTap() {
+        self.playerTapInstalled = true
+    }
+
+    func removePlayerTapIfInstalled(remove: () -> Void) {
+        guard self.playerTapInstalled else { return }
+        remove()
+        self.playerTapInstalled = false
     }
 }
 
