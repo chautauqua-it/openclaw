@@ -195,7 +195,7 @@ private actor IanuaChatAPI {
                     continue
                 }
                 let message = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
-                if http.statusCode == 401 {
+                if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
                     IanuaSessionStore.clear()
                     throw WADAPIError.unauthorized
                 }

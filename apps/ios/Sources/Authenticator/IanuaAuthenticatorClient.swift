@@ -124,7 +124,10 @@ actor IanuaAuthenticatorClient {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw WADAPIError.unreachable }
-            if http.statusCode == 401 { throw WADAPIError.unauthorized }
+            if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
+                IanuaSessionStore.clear()
+                throw WADAPIError.unauthorized
+            }
             if http.statusCode == 428 { throw IanuaAuthenticatorError.enrollmentRequired }
             guard (200...299).contains(http.statusCode) else {
                 let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

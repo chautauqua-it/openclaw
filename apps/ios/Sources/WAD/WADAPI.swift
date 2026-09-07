@@ -59,9 +59,13 @@ enum IanuaRealtimeEndpointPolicy {
 }
 
 enum IanuaRealtimeHTTPPolicy {
+    static func requiresLogin(statusCode: Int) -> Bool {
+        statusCode == 401 || statusCode == 403
+    }
+
     static func errorMessage(statusCode: Int, data: Data) -> String? {
         guard !(200...299).contains(statusCode) else { return nil }
-        if statusCode == 401 { return IanuaSessionStore.expiredMessage }
+        if self.requiresLogin(statusCode: statusCode) { return IanuaSessionStore.expiredMessage }
         let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
         return message ?? "Errore Iànua Realtime \(statusCode)."
     }
@@ -147,7 +151,7 @@ actor WADAPIClient {
             guard let http = response as? HTTPURLResponse else {
                 throw WADAPIError.server("Risposta WAD sconosciuta")
             }
-            if http.statusCode == 401 {
+            if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
                 if options.login {
                     let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
                     throw WADAPIError.server(message ?? "Credenziali non valide")

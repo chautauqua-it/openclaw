@@ -176,7 +176,9 @@ final class SpockTalkManager {
                 return
             }
             if let message = IanuaRealtimeHTTPPolicy.errorMessage(statusCode: http.statusCode, data: data) {
-                if http.statusCode == 401 { IanuaSessionStore.clear() }
+                if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
+                    IanuaSessionStore.clear()
+                }
                 self.fail(message)
                 return
             }
