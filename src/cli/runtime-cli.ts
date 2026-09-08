@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { Command } from "commander";
 import { z } from "zod";
 import { danger } from "../globals.js";
@@ -9,7 +10,6 @@ import {
   type DualRuntimeTopology,
 } from "../infra/dual-runtime-readiness.js";
 import { defaultRuntime } from "../runtime.js";
-import { normalizeOptionalString } from "../shared/string-coerce.js";
 
 type RuntimeReadinessOptions = {
   config?: string;

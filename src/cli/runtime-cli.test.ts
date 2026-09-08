@@ -14,7 +14,7 @@ vi.mock("../runtime.js", async () => ({
 }));
 
 const { registerRuntimeCli } = await import("./runtime-cli.js");
-const { getSubCliEntries } = await import("./program/subcli-descriptors.js");
+const { getSubCliEntriesCore } = await import("./program/subcli-descriptors.js");
 
 function validFencing() {
   return { backend: "redis", leaseTtlMs: 5_000, renewalIntervalMs: 1_000, takeoverGraceMs: 5_000 };
@@ -75,7 +75,7 @@ describe("runtime-cli", () => {
   });
 
   it("is registered in the sub-CLI descriptor catalog", () => {
-    const names = getSubCliEntries().map((descriptor) => descriptor.name);
+    const names = getSubCliEntriesCore().map((descriptor) => descriptor.name);
     expect(names).toContain("runtime");
   });
 
