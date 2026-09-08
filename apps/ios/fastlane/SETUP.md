@@ -34,7 +34,7 @@ Important: `apps/ios/fastlane/.env` is only for Fastlane/App Store Connect auth 
 Optional app targeting variables (helpful if Fastlane cannot auto-resolve app by bundle):
 
 ```bash
-ASC_APP_IDENTIFIER=ai.openclaw.client
+ASC_APP_IDENTIFIER=it.differen.openclaw
 # or
 ASC_APP_ID=YOUR_APP_STORE_CONNECT_APP_ID
 ```
@@ -53,7 +53,7 @@ Code signing variable (optional in `.env`):
 IOS_DEVELOPMENT_TEAM=YOUR_TEAM_ID
 ```
 
-Tip: run `scripts/ios-team-id.sh` from repo root to print a Team ID for `.env`. The helper prefers the canonical OpenClaw team (`Y5PE65HELJ`) when present locally; otherwise it prefers the first non-personal team from your Xcode account (then personal team if needed). Fastlane uses this helper automatically if `IOS_DEVELOPMENT_TEAM` is missing.
+Tip: set `IOS_DEVELOPMENT_TEAM` explicitly to the Differen organization Team ID for release work. The helper remains available for local development, but a company release must not rely on automatic selection from multiple Xcode accounts.
 
 For local/manual iOS builds that stay on direct APNs, configure the gateway host separately with `OPENCLAW_APNS_TEAM_ID`, `OPENCLAW_APNS_KEY_ID`, and either `OPENCLAW_APNS_PRIVATE_KEY_P8` or `OPENCLAW_APNS_PRIVATE_KEY_PATH`. Those gateway runtime env vars are separate from Fastlane's `.env`.
 

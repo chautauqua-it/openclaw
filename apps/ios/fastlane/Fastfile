@@ -10,7 +10,7 @@ def beta_app_identifier
     value = ENV[key]
     return value.strip if value && !value.strip.empty?
   end
-  "ai.openclaw.client"
+  "it.differen.openclaw"
 end
 
 BETA_APP_IDENTIFIER = beta_app_identifier
