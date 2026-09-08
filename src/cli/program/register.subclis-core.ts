@@ -104,6 +104,7 @@ const entrySpecs: readonly CommandGroupDescriptorSpec<SubCliRegistrar>[] = [
     [["daemon"], () => import("../daemon-cli.js"), "registerDaemonCli"],
     [["logs"], () => import("../logs-cli.js"), "registerLogsCli"],
     [["system"], () => import("../system-cli.js"), "registerSystemCli"],
+    [["runtime"], () => import("../runtime-cli.js"), "registerRuntimeCli"],
     [["models"], () => import("../models-cli.js"), "registerModelsCli"],
     [["promos"], () => import("../promos-cli.js"), "registerPromosCli"],
     [["telemetry"], () => import("../telemetry-cli.js"), "registerTelemetryCli"],

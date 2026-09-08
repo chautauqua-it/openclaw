@@ -574,6 +574,17 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
   { commandPath: ["security"], policy: { networkProxy: "bypass" } },
   { commandPath: ["system"], policy: { networkProxy: "bypass" } },
   { commandPath: ["resume"], policy: { networkProxy: "bypass" } },
+  { commandPath: ["runtime"], policy: { networkProxy: "bypass" } },
+  {
+    commandPath: ["runtime", "readiness"],
+    exact: true,
+    policy: {
+      configGuard: "skip",
+      loadPlugins: "never",
+      ensureCliPath: false,
+      networkProxy: "bypass",
+    },
+  },
   { commandPath: ["terminal"], policy: { networkProxy: "bypass" } },
   { commandPath: ["tui"], policy: { networkProxy: "bypass" } },
   { commandPath: ["uninstall"], policy: { networkProxy: "bypass" } },

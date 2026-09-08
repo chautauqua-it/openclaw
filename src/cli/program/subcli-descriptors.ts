@@ -35,6 +35,11 @@ const subCliCommandCatalog = defineCommandDescriptorCatalog([
     machineOutput: ({ argv }) => isSystemMachineOutput(argv),
   },
   {
+    name: "runtime",
+    description: "Dual-runtime topology tools",
+    hasSubcommands: true,
+  },
+  {
     name: "models",
     description: "Model discovery, scanning, and configuration",
     hasSubcommands: true,
