@@ -49,25 +49,25 @@
 		<string>_openclaw-gw._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>OpenClaw can capture photos or short video clips when requested via the gateway.</string>
+	<string>Iànua can capture photos or short video clips when requested via the gateway.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>OpenClaw usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.</string>
+	<string>Iànua usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Ianua usa Face ID per firmare le approvazioni di sicurezza con la chiave protetta di questo iPhone.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>OpenClaw discovers and connects to your OpenClaw gateway on the local network.</string>
+	<string>Iànua discovers and connects to your Iànua gateway on the local network.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>OpenClaw can share your location in the background when you enable Always.</string>
+	<string>Iànua can share your location in the background when you enable Always.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>OpenClaw uses your location when you allow location sharing.</string>
+	<string>Iànua uses your location when you allow location sharing.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>OpenClaw needs microphone access for voice wake.</string>
+	<string>Iànua needs microphone access for voice wake.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>OpenClaw may use motion data to support device-aware interactions and automations.</string>
+	<string>Iànua may use motion data to support device-aware interactions and automations.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>OpenClaw needs photo library access when you choose existing photos to share with your assistant.</string>
+	<string>Iànua needs photo library access when you choose existing photos to share with your assistant.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>OpenClaw uses on-device speech recognition for voice wake.</string>
+	<string>Iànua uses on-device speech recognition for voice wake.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>OpenClawCanonicalVersion</key>

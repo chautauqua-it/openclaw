@@ -49,7 +49,7 @@ final class ShareViewController: UIViewController {
         self.draftTextView.textContainerInset = UIEdgeInsets(top: 12, left: 10, bottom: 12, right: 10)
 
         self.sendButton.translatesAutoresizingMaskIntoConstraints = false
-        self.sendButton.setTitle("Send to OpenClaw", for: .normal)
+        self.sendButton.setTitle("Send to Iànua", for: .normal)
         self.sendButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         self.sendButton.addTarget(self, action: #selector(self.handleSendTap), for: .touchUpInside)
         self.sendButton.isEnabled = false
@@ -134,13 +134,13 @@ final class ShareViewController: UIViewController {
             self.sendButton.isEnabled = false
             self.cancelButton.isEnabled = false
         }
-        self.showStatus("Sending to OpenClaw gateway…")
+        self.showStatus("Sending to Iànua gateway…")
         ShareGatewayRelaySettings.saveLastEvent("Sending to gateway…")
         do {
             try await self.sendMessageToGateway(trimmed, attachments: self.pendingAttachments)
             ShareGatewayRelaySettings.saveLastEvent(
                 "Sent to gateway (\(trimmed.count) chars, \(self.pendingAttachments.count) attachment(s)).")
-            self.showStatus("Sent to OpenClaw.")
+            self.showStatus("Sent to Iànua.")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 self.extensionContext?.completeRequest(returningItems: nil)
             }
@@ -161,7 +161,7 @@ final class ShareViewController: UIViewController {
             throw NSError(
                 domain: "OpenClawShare",
                 code: 10,
-                userInfo: [NSLocalizedDescriptionKey: "OpenClaw is not connected to a gateway yet."])
+                userInfo: [NSLocalizedDescriptionKey: "Iànua is not connected to a gateway yet."])
         }
         guard let url = URL(string: config.gatewayURLString) else {
             throw NSError(
@@ -183,7 +183,7 @@ final class ShareViewController: UIViewController {
                 permissions: [:],
                 clientId: clientId,
                 clientMode: "node",
-                clientDisplayName: "OpenClaw Share",
+                clientDisplayName: "Iànua Share",
                 includeDeviceIdentity: false)
         }
 
