@@ -57,6 +57,7 @@ struct OnboardingWizardView: View {
     @State private var manualPort: Int = 18789
     @State private var manualPortText: String = "18789"
     @State private var manualTLS: Bool = true
+    @State private var manualPath: String = ""
     @State private var gatewayToken: String = ""
     @State private var gatewayPassword: String = ""
     @State private var connectMessage: String?
@@ -582,6 +583,9 @@ struct OnboardingWizardView: View {
             TextField("Port", text: self.$manualPortText)
                 .keyboardType(.numberPad)
             Toggle("Use TLS", isOn: self.$manualTLS)
+            TextField("Percorso (opzionale)", text: self.$manualPath)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
             self.manualConnectButton
         } header: {
             Text("Developer Local")
@@ -717,6 +721,9 @@ struct OnboardingWizardView: View {
             TextField("Port", text: self.$manualPortText)
                 .keyboardType(.numberPad)
             Toggle("Use TLS", isOn: self.$manualTLS)
+            TextField("Percorso (opzionale)", text: self.$manualPath)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
             TextField("Discovery Domain (optional)", text: self.$discoveryDomain)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -751,6 +758,7 @@ struct OnboardingWizardView: View {
         self.manualHost = link.host
         self.manualPort = link.port
         self.manualTLS = link.tls
+        self.manualPath = link.path ?? ""
         let trimmedBootstrapToken = link.bootstrapToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.saveGatewayBootstrapToken(trimmedBootstrapToken)
         if let token = link.token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
@@ -766,7 +774,7 @@ struct OnboardingWizardView: View {
         self.saveGatewayCredentials(token: self.gatewayToken, password: self.gatewayPassword)
         self.showQRScanner = false
         self.connectMessage = "Connecting via QR code…"
-        self.statusLine = "QR loaded. Connecting to \(link.host):\(link.port)…"
+        self.statusLine = "QR loaded. Connecting to \(link.host):\(link.port)\(link.path ?? "")…"
         if self.selectedMode == nil {
             self.selectedMode = link.tls ? .remoteDomain : .homeNetwork
         }
@@ -896,10 +904,11 @@ struct OnboardingWizardView: View {
         if self.manualHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if let last = GatewaySettingsStore.loadLastGatewayConnection() {
                 switch last {
-                case let .manual(host, port, useTLS, _):
+                case let .manual(host, port, path, useTLS, _):
                     self.manualHost = host
                     self.manualPort = port
                     self.manualTLS = useTLS
+                    self.manualPath = path ?? ""
                 case .discovered:
                     self.manualHost = "openclaw.local"
                     self.manualPort = 18789
@@ -1005,10 +1014,15 @@ struct OnboardingWizardView: View {
         guard !host.isEmpty, self.manualPort > 0, self.manualPort <= 65535 else { return }
         self.connectingGatewayID = "manual"
         self.issue = .none
+        let path = GatewayConnectDeepLink.normalizePath(self.manualPath).value
         self.connectMessage = "Connecting to \(host)…"
-        self.statusLine = "Connecting to \(host):\(self.manualPort)…"
+        self.statusLine = "Connecting to \(host):\(self.manualPort)\(path ?? "")…"
         defer { self.connectingGatewayID = nil }
-        await self.gatewayController.connectManual(host: host, port: self.manualPort, useTLS: self.manualTLS)
+        await self.gatewayController.connectManual(
+            host: host,
+            port: self.manualPort,
+            useTLS: self.manualTLS,
+            path: path)
     }
 
     private func retryLastAttempt(silent: Bool = false) async {

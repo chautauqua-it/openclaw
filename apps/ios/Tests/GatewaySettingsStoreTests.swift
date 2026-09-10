@@ -148,7 +148,38 @@ private func withLastGatewaySnapshot(_ body: () -> Void) {
                 stableID: "manual|example.com|443")
 
             let loaded = GatewaySettingsStore.loadLastGatewayConnection()
-            #expect(loaded == .manual(host: "example.com", port: 443, useTLS: true, stableID: "manual|example.com|443"))
+            #expect(loaded == .manual(
+                host: "example.com", port: 443, path: nil, useTLS: true,
+                stableID: "manual|example.com|443"))
+        }
+    }
+
+    @Test func lastGateway_manualRoundTripKeepsRoutePath() {
+        withLastGatewaySnapshot {
+            GatewaySettingsStore.saveLastGatewayConnectionManual(
+                host: "example.com",
+                port: 443,
+                path: "gw-secret/",
+                useTLS: true,
+                stableID: "manual|example.com|443|/gw-secret/")
+
+            #expect(GatewaySettingsStore.loadLastGatewayConnection() == .manual(
+                host: "example.com", port: 443, path: "/gw-secret/", useTLS: true,
+                stableID: "manual|example.com|443|/gw-secret/"))
+        }
+    }
+
+    /// Entries written before the path existed must still decode.
+    @Test func lastGateway_legacyEntryWithoutPathDecodes() {
+        withLastGatewaySnapshot {
+            let legacy = #"{"kind":"manual","stableID":"manual|example.org|18789","#
+                + #""useTLS":true,"host":"example.org","port":18789}"#
+            applyKeychain([lastGatewayKeychainEntry: legacy])
+            applyDefaults(["gateway.last.stableID": nil])
+
+            #expect(GatewaySettingsStore.loadLastGatewayConnection() == .manual(
+                host: "example.org", port: 18789, path: nil, useTLS: true,
+                stableID: "manual|example.org|18789"))
         }
     }
 
@@ -179,7 +210,9 @@ private func withLastGatewaySnapshot(_ body: () -> Void) {
             ])
 
             let loaded = GatewaySettingsStore.loadLastGatewayConnection()
-            #expect(loaded == .manual(host: "example.org", port: 18789, useTLS: false, stableID: "manual|example.org|18789"))
+            #expect(loaded == .manual(
+                host: "example.org", port: 18789, path: nil, useTLS: false,
+                stableID: "manual|example.org|18789"))
 
             // Legacy keys should be cleaned up after migration.
             let defaults = UserDefaults.standard

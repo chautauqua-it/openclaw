@@ -159,6 +159,29 @@ import Testing
         #expect(GatewayConnectionController.normalizedGatewayPath("") == "")
         #expect(GatewayConnectionController.normalizedGatewayPath("   ") == "")
         #expect(GatewayConnectionController.normalizedGatewayPath("/") == "")
+        #expect(GatewayConnectionController.normalizedGatewayPath("/gw/../admin") == "")
+    }
+
+    /// Distinct routes on one host are distinct gateways: sharing a stable ID would
+    /// let one route's TLS pin authorize another.
+    @Test @MainActor func manualStableID_separatesRoutesOnTheSameHostPort() async {
+        let withPath = GatewayConnectionController.manualStableID(
+            host: "ianua.differen.it", port: 443, path: "gw-abc123")
+        let otherPath = GatewayConnectionController.manualStableID(
+            host: "ianua.differen.it", port: 443, path: "/gw-zzz999/")
+        #expect(withPath != otherPath)
+        #expect(withPath == "manual|ianua.differen.it|443|/gw-abc123")
+    }
+
+    /// Pathless IDs keep their historical form so pins stored by earlier builds resolve.
+    @Test @MainActor func manualStableID_pathlessFormIsUnchanged() async {
+        #expect(
+            GatewayConnectionController.manualStableID(host: "Gateway.Example.com", port: 18789)
+                == "manual|gateway.example.com|18789")
+        #expect(
+            GatewayConnectionController.manualStableID(
+                host: "gateway.example.com", port: 18789, path: "/")
+                == "manual|gateway.example.com|18789")
     }
 
     @Test @MainActor func buildGatewayURL_appendsOptionalPath() async {

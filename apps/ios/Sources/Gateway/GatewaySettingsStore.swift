@@ -1,4 +1,5 @@
 import Foundation
+import OpenClawKit
 import os
 
 enum GatewaySettingsStore {
@@ -152,12 +153,12 @@ enum GatewaySettingsStore {
     }
 
     enum LastGatewayConnection: Equatable {
-        case manual(host: String, port: Int, useTLS: Bool, stableID: String)
+        case manual(host: String, port: Int, path: String?, useTLS: Bool, stableID: String)
         case discovered(stableID: String, useTLS: Bool)
 
         var stableID: String {
             switch self {
-            case let .manual(_, _, _, stableID):
+            case let .manual(_, _, _, _, stableID):
                 stableID
             case let .discovered(stableID, _):
                 stableID
@@ -166,7 +167,7 @@ enum GatewaySettingsStore {
 
         var useTLS: Bool {
             switch self {
-            case let .manual(_, _, useTLS, _):
+            case let .manual(_, _, _, useTLS, _):
                 useTLS
             case let .discovered(_, useTLS):
                 useTLS
@@ -186,6 +187,8 @@ enum GatewaySettingsStore {
         var useTLS: Bool
         var host: String?
         var port: Int?
+        /// Optional so entries written before route paths existed still decode.
+        var path: String?
     }
 
     static func loadTalkProviderApiKey(provider: String) -> String? {
@@ -210,9 +213,20 @@ enum GatewaySettingsStore {
         _ = KeychainStore.saveString(trimmed, service: self.talkService, account: account)
     }
 
-    static func saveLastGatewayConnectionManual(host: String, port: Int, useTLS: Bool, stableID: String) {
+    static func saveLastGatewayConnectionManual(
+        host: String,
+        port: Int,
+        path: String? = nil,
+        useTLS: Bool,
+        stableID: String)
+    {
         let payload = LastGatewayConnectionData(
-            kind: .manual, stableID: stableID, useTLS: useTLS, host: host, port: port)
+            kind: .manual,
+            stableID: stableID,
+            useTLS: useTLS,
+            host: host,
+            port: port,
+            path: GatewayConnectDeepLink.normalizePath(path).value)
         self.saveLastGatewayConnectionData(payload)
     }
 
@@ -242,7 +256,12 @@ enum GatewaySettingsStore {
         let host = (stored.host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let port = stored.port ?? 0
         guard !host.isEmpty, port > 0, port <= 65535 else { return nil }
-        return .manual(host: host, port: port, useTLS: stored.useTLS, stableID: stableID)
+        return .manual(
+            host: host,
+            port: port,
+            path: GatewayConnectDeepLink.normalizePath(stored.path).value,
+            useTLS: stored.useTLS,
+            stableID: stableID)
     }
 
     static func clearLastGatewayConnection(defaults: UserDefaults = .standard) {

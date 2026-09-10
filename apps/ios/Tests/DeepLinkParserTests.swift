@@ -161,4 +161,64 @@ private func agentAction(
             token: nil,
             password: nil))
     }
+
+    /// The gateway is published on a single nginx location, so losing the route
+    /// makes pairing hit the public site instead of the websocket.
+    @Test func parseGatewaySetupCodeKeepsRoutePath() {
+        let payload = #"{"url":"wss://gateway.example.com/gw-secret/","bootstrapToken":"tok"}"#
+        let link = GatewayConnectDeepLink.fromSetupCode(setupCode(from: payload))
+
+        #expect(link == .init(
+            host: "gateway.example.com",
+            port: 443,
+            tls: true,
+            path: "/gw-secret/",
+            bootstrapToken: "tok",
+            token: nil,
+            password: nil))
+        #expect(link?.websocketURL?.absoluteString == "wss://gateway.example.com:443/gw-secret/")
+    }
+
+    @Test func parseGatewaySetupCodeWithoutPathIsUnchanged() {
+        let payload = #"{"url":"wss://gateway.example.com:443","bootstrapToken":"tok"}"#
+        let link = GatewayConnectDeepLink.fromSetupCode(setupCode(from: payload))
+
+        #expect(link?.path == nil)
+        #expect(link?.websocketURL?.absoluteString == "wss://gateway.example.com:443")
+    }
+
+    @Test func parseGatewaySetupCodeTreatsRootAndBlankPathAsAbsent() {
+        let rootPayload = #"{"url":"wss://gateway.example.com/","bootstrapToken":"tok"}"#
+        #expect(GatewayConnectDeepLink.fromSetupCode(setupCode(from: rootPayload))?.path == nil)
+
+        #expect(GatewayConnectDeepLink.normalizePath("") == .absent)
+        #expect(GatewayConnectDeepLink.normalizePath("   ") == .absent)
+    }
+
+    @Test func parseGatewaySetupCodeRejectsTraversalPath() {
+        let payload = #"{"url":"wss://gateway.example.com/gw/../admin","bootstrapToken":"tok"}"#
+        #expect(GatewayConnectDeepLink.fromSetupCode(setupCode(from: payload)) == nil)
+    }
+
+    @Test func parseGatewaySetupCodeRejectsInsecureNonLoopbackWsWithPath() {
+        let payload = #"{"url":"ws://attacker.example:18789/gw-secret/","bootstrapToken":"tok"}"#
+        #expect(GatewayConnectDeepLink.fromSetupCode(setupCode(from: payload)) == nil)
+    }
+
+    @Test func parseGatewayLinkParsesPathQueryParam() {
+        let url = URL(
+            string: "openclaw://gateway?host=gateway.example.com&port=443&tls=1&path=gw-secret")!
+        guard case let .gateway(link)? = DeepLinkParser.parse(url) else {
+            Issue.record("expected a gateway route")
+            return
+        }
+        #expect(link.path == "/gw-secret")
+        #expect(link.websocketURL?.absoluteString == "wss://gateway.example.com:443/gw-secret")
+    }
+
+    @Test func parseGatewayLinkRejectsTraversalPathQueryParam() {
+        let url = URL(
+            string: "openclaw://gateway?host=gateway.example.com&port=443&tls=1&path=/gw/../admin")!
+        #expect(DeepLinkParser.parse(url) == nil)
+    }
 }

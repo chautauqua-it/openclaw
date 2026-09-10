@@ -34,6 +34,7 @@ struct SettingsTab: View {
     @AppStorage("gateway.manual.host") private var manualGatewayHost: String = ""
     @AppStorage("gateway.manual.port") private var manualGatewayPort: Int = 18789
     @AppStorage("gateway.manual.tls") private var manualGatewayTLS: Bool = true
+    @AppStorage("gateway.manual.path") private var manualGatewayPath: String = ""
     @AppStorage("gateway.public.path") private var publicGatewayPath: String = ""
     @AppStorage("gateway.discovery.debugLogs") private var discoveryDebugLogsEnabled: Bool = false
     @AppStorage("canvas.debugStatusEnabled") private var canvasDebugStatusEnabled: Bool = false
@@ -148,7 +149,11 @@ struct SettingsTab: View {
                             LabeledContent("Server", value: serverName)
                             if let addr = self.appModel.gatewayRemoteAddress {
                                 let parts = Self.parseHostPort(from: addr)
-                                let urlString = Self.httpURLString(host: parts?.host, port: parts?.port, fallback: addr)
+                                let urlString = Self.httpURLString(
+                                    host: parts?.host,
+                                    port: parts?.port,
+                                    path: parts?.path,
+                                    fallback: addr)
                                 LabeledContent("Address") {
                                     Text(urlString)
                                 }
@@ -194,17 +199,13 @@ struct SettingsTab: View {
 
                             Toggle("Use TLS", isOn: self.$manualGatewayTLS)
 
-                            if GatewayConnectionController.isPublicGatewayHost(self.manualGatewayHost) {
-                                TextField("Percorso gateway (segreto)", text: self.$publicGatewayPath)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                let publicHostLabel = self.manualGatewayHost
-                                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                                Text("Segmento segreto della route pubblica WSS. "
-                                    + "Richiesto per connettersi via \(publicHostLabel).")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
+                            TextField("Percorso (opzionale)", text: self.$manualGatewayPath)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Text("Route del gateway dietro reverse proxy, es. /gw-abc123/. "
+                                + "Lascialo vuoto se il gateway risponde sulla radice.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
 
                             Button {
                                 Task { await self.connectManual() }
@@ -487,6 +488,10 @@ struct SettingsTab: View {
             .onAppear {
                 self.lastLocationModeRaw = self.locationEnabledModeRaw
                 self.syncManualPortText()
+                // The route used to be stored only for the allowlisted public host.
+                if self.manualGatewayPath.isEmpty, !self.publicGatewayPath.isEmpty {
+                    self.manualGatewayPath = self.publicGatewayPath
+                }
                 let trimmedInstanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmedInstanceId.isEmpty {
                     self.gatewayToken = GatewaySettingsStore.loadGatewayToken(instanceId: trimmedInstanceId) ?? ""
@@ -584,12 +589,12 @@ struct SettingsTab: View {
                     .foregroundStyle(.secondary)
 
                 if let lastKnown = GatewaySettingsStore.loadLastGatewayConnection(),
-                   case let .manual(host, port, _, _) = lastKnown
+                   case let .manual(host, port, path, _, _) = lastKnown
                 {
                     Button {
                         Task { await self.connectLastKnown() }
                     } label: {
-                        self.lastKnownButtonLabel(host: host, port: port)
+                        self.lastKnownButtonLabel(host: host, port: port, path: path)
                     }
                     .disabled(self.connectingGatewayID != nil)
                     .buttonStyle(.borderedProminent)
@@ -722,7 +727,7 @@ struct SettingsTab: View {
     }
 
     @ViewBuilder
-    private func lastKnownButtonLabel(host: String, port: Int) -> some View {
+    private func lastKnownButtonLabel(host: String, port: Int, path: String? = nil) -> some View {
         if self.connectingGatewayID == "last-known" {
             HStack(spacing: 8) {
                 ProgressView()
@@ -735,7 +740,7 @@ struct SettingsTab: View {
                 Image(systemName: "bolt.horizontal.circle.fill")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Connect last known")
-                    Text("\(host):\(port)")
+                    Text("\(host):\(port)\(path ?? "")")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -786,14 +791,16 @@ struct SettingsTab: View {
         let resolvedPort = self.resolvedManualPort(host: host)
         let hasToken = !self.gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasPassword = !self.gatewayPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let path = GatewayConnectDeepLink.normalizePath(self.manualGatewayPath).value
         GatewayDiagnostics.log(
-            "setup code applied host=\(host) port=\(resolvedPort ?? -1) "
+            "setup code applied host=\(host) port=\(resolvedPort ?? -1) path=\(path ?? "-") "
                 + "tls=\(self.manualGatewayTLS) token=\(hasToken) password=\(hasPassword)")
         guard let port = resolvedPort else {
             self.setupStatusText = "Failed: invalid port"
             return
         }
-        let ok = await self.preflightGateway(host: host, port: port, useTLS: self.manualGatewayTLS)
+        let ok = await self.preflightGateway(
+            host: host, port: port, useTLS: self.manualGatewayTLS, path: path)
         guard ok else { return }
         self.setupStatusText = "Setup code applied. Connecting…"
         await self.connectManual()
@@ -869,7 +876,15 @@ struct SettingsTab: View {
 
     private func applySetupURL(_ url: URL) {
         guard let host = url.host, !host.isEmpty else { return }
+        // A gateway published behind a reverse proxy answers only on its route, so the
+        // path in the setup code is part of the address, not decoration.
+        let normalizedPath = GatewayConnectDeepLink.normalizePath(url.path)
+        guard normalizedPath != .invalid else {
+            self.setupStatusText = "Setup code has an invalid gateway path."
+            return
+        }
         self.manualGatewayHost = host
+        self.manualGatewayPath = normalizedPath.value ?? ""
         if let port = url.port {
             self.manualGatewayPort = port
             self.manualGatewayPortText = String(port)
@@ -897,7 +912,8 @@ struct SettingsTab: View {
         return 18789
     }
 
-    private func preflightGateway(host: String, port: Int, useTLS: Bool) async -> Bool {
+    /// `path` only annotates diagnostics: reachability here is a TCP probe of host:port.
+    private func preflightGateway(host: String, port: Int, useTLS: Bool, path: String? = nil) async -> Bool {
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
@@ -918,7 +934,8 @@ struct SettingsTab: View {
             self.gatewayLogger.warning("\(msg, privacy: .public)")
             return false
         }
-        GatewayDiagnostics.log("preflight ok host=\(trimmed) port=\(port) tls=\(useTLS)")
+        GatewayDiagnostics.log(
+            "preflight ok host=\(trimmed) port=\(port) tls=\(useTLS) path=\(path ?? "-")")
         return true
     }
 
@@ -947,12 +964,15 @@ struct SettingsTab: View {
         self.manualGatewayEnabled = true
         defer { self.connectingGatewayID = nil }
 
+        let path = GatewayConnectDeepLink.normalizePath(self.manualGatewayPath).value
         GatewayDiagnostics.log(
-            "connect manual host=\(host) port=\(self.manualGatewayPort) tls=\(self.manualGatewayTLS)")
+            "connect manual host=\(host) port=\(self.manualGatewayPort) "
+                + "tls=\(self.manualGatewayTLS) path=\(path ?? "-")")
         await self.gatewayController.connectManual(
             host: host,
             port: self.manualGatewayPort,
-            useTLS: self.manualGatewayTLS)
+            useTLS: self.manualGatewayTLS,
+            path: path)
     }
 
     private var setupStatusLine: String? {
@@ -1053,8 +1073,13 @@ struct SettingsTab: View {
         SettingsNetworkingHelpers.parseHostPort(from: address)
     }
 
-    private static func httpURLString(host: String?, port: Int?, fallback: String) -> String {
-        SettingsNetworkingHelpers.httpURLString(host: host, port: port, fallback: fallback)
+    private static func httpURLString(
+        host: String?,
+        port: Int?,
+        path: String? = nil,
+        fallback: String) -> String
+    {
+        SettingsNetworkingHelpers.httpURLString(host: host, port: port, path: path, fallback: fallback)
     }
 
     private func retryGatewayConnectionFromProblem() async {

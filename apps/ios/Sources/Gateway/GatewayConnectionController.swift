@@ -162,27 +162,34 @@ final class GatewayConnectionController {
         _ = await self.connectWithDiagnostics(gateway)
     }
 
-    func connectManual(host: String, port: Int, useTLS: Bool) async {
+    func connectManual(host: String, port: Int, useTLS: Bool, path: String? = nil) async {
         let instanceId = UserDefaults.standard.string(forKey: "node.instanceId")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let token = GatewaySettingsStore.loadGatewayToken(instanceId: instanceId)
         let bootstrapToken = GatewaySettingsStore.loadGatewayBootstrapToken(instanceId: instanceId)
         let password = GatewaySettingsStore.loadGatewayPassword(instanceId: instanceId)
 
+        // A traversal path is refused outright rather than silently rewritten.
+        let normalizedPath = GatewayConnectDeepLink.normalizePath(path)
+        guard normalizedPath != .invalid else { return }
+        let resolvedPath = normalizedPath.value
+
         if Self.isPublicGatewayHost(host) {
             // Public gateway: Let's Encrypt certs rotate, so leaf TOFU pinning
             // would break at every renewal. System CA trust, TLS always on.
             let publicPort = port > 0 ? port : 443
-            let stableID = self.manualStableID(host: host, port: publicPort)
+            let publicPath = resolvedPath ?? Self.storedPublicGatewayPath()
+            let stableID = self.manualStableID(host: host, port: publicPort, path: publicPath)
             guard let url = self.buildGatewayURL(
                 host: host,
                 port: publicPort,
                 useTLS: true,
-                path: Self.storedPublicGatewayPath())
+                path: publicPath)
             else { return }
             GatewaySettingsStore.saveLastGatewayConnectionManual(
                 host: host,
                 port: publicPort,
+                path: publicPath,
                 useTLS: true,
                 stableID: stableID)
             self.didAutoConnect = true
@@ -199,10 +206,11 @@ final class GatewayConnectionController {
         let resolvedUseTLS = self.resolveManualUseTLS(host: host, useTLS: useTLS)
         guard let resolvedPort = self.resolveManualPort(host: host, port: port, useTLS: resolvedUseTLS)
         else { return }
-        let stableID = self.manualStableID(host: host, port: resolvedPort)
+        let stableID = self.manualStableID(host: host, port: resolvedPort, path: resolvedPath)
         let stored = GatewayTLSStore.loadFingerprint(stableID: stableID)
         if resolvedUseTLS, stored == nil {
-            guard let url = self.buildGatewayURL(host: host, port: resolvedPort, useTLS: true) else { return }
+            guard let url = self.buildGatewayURL(
+                host: host, port: resolvedPort, useTLS: true, path: resolvedPath) else { return }
             guard let fp = await self.probeTLSFingerprint(url: url) else {
                 self.appModel?.gatewayStatusText =
                     "TLS handshake failed for \(host):\(resolvedPort). "
@@ -227,11 +235,13 @@ final class GatewayConnectionController {
         guard let url = self.buildGatewayURL(
             host: host,
             port: resolvedPort,
-            useTLS: tlsParams?.required == true)
+            useTLS: tlsParams?.required == true,
+            path: resolvedPath)
         else { return }
         GatewaySettingsStore.saveLastGatewayConnectionManual(
             host: host,
             port: resolvedPort,
+            path: resolvedPath,
             useTLS: resolvedUseTLS && tlsParams != nil,
             stableID: stableID)
         self.didAutoConnect = true
@@ -247,8 +257,8 @@ final class GatewayConnectionController {
     func connectLastKnown() async {
         guard let last = GatewaySettingsStore.loadLastGatewayConnection() else { return }
         switch last {
-        case let .manual(host, port, useTLS, _):
-            await self.connectManual(host: host, port: port, useTLS: useTLS)
+        case let .manual(host, port, path, useTLS, _):
+            await self.connectManual(host: host, port: port, useTLS: useTLS, path: path)
         case let .discovered(stableID, _):
             guard let gateway = self.gateways.first(where: { $0.stableID == stableID }) else { return }
             _ = await self.connectDiscoveredGateway(gateway)
@@ -291,6 +301,7 @@ final class GatewayConnectionController {
             GatewaySettingsStore.saveLastGatewayConnectionManual(
                 host: prompt.host,
                 port: prompt.port,
+                path: URLComponents(url: pending.url, resolvingAgainstBaseURL: false)?.path,
                 useTLS: true,
                 stableID: pending.stableID)
         } else {
@@ -370,15 +381,21 @@ final class GatewayConnectionController {
 
             let manualPort = defaults.integer(forKey: "gateway.manual.port")
             let manualTLS = defaults.bool(forKey: "gateway.manual.tls")
+            let manualPathSetting = GatewayConnectDeepLink
+                .normalizePath(defaults.string(forKey: "gateway.manual.path"))
+            guard manualPathSetting != .invalid else { return }
+            let manualPath = manualPathSetting.value
 
             if Self.isPublicGatewayHost(manualHost) {
                 let publicPort = manualPort > 0 ? manualPort : 443
-                let stableID = self.manualStableID(host: manualHost, port: publicPort)
+                let publicPath = manualPath ?? Self.storedPublicGatewayPath()
+                let stableID = self.manualStableID(
+                    host: manualHost, port: publicPort, path: publicPath)
                 guard let url = self.buildGatewayURL(
                     host: manualHost,
                     port: publicPort,
                     useTLS: true,
-                    path: Self.storedPublicGatewayPath())
+                    path: publicPath)
                 else { return }
 
                 self.didAutoConnect = true
@@ -399,7 +416,8 @@ final class GatewayConnectionController {
                 useTLS: resolvedUseTLS)
             else { return }
 
-            let stableID = self.manualStableID(host: manualHost, port: resolvedPort)
+            let stableID = self.manualStableID(
+                host: manualHost, port: resolvedPort, path: manualPath)
             let tlsParams = self.resolveManualTLSParams(
                 stableID: stableID,
                 tlsEnabled: resolvedUseTLS,
@@ -408,7 +426,8 @@ final class GatewayConnectionController {
             guard let url = self.buildGatewayURL(
                 host: manualHost,
                 port: resolvedPort,
-                useTLS: tlsParams?.required == true)
+                useTLS: tlsParams?.required == true,
+                path: manualPath)
             else { return }
 
             self.didAutoConnect = true
@@ -423,14 +442,14 @@ final class GatewayConnectionController {
         }
 
         if let lastKnown = GatewaySettingsStore.loadLastGatewayConnection() {
-            if case let .manual(host, port, useTLS, stableID) = lastKnown {
+            if case let .manual(host, port, path, useTLS, stableID) = lastKnown {
                 if Self.isPublicGatewayHost(host) {
                     // Public gateway: system CA trust, no stored pin required.
                     guard let url = self.buildGatewayURL(
                         host: host,
                         port: port > 0 ? port : 443,
                         useTLS: true,
-                        path: Self.storedPublicGatewayPath())
+                        path: path ?? Self.storedPublicGatewayPath())
                     else { return }
 
                     self.didAutoConnect = true
@@ -451,7 +470,8 @@ final class GatewayConnectionController {
                 guard let url = self.buildGatewayURL(
                     host: host,
                     port: port,
-                    useTLS: resolvedUseTLS && tlsParams != nil)
+                    useTLS: resolvedUseTLS && tlsParams != nil,
+                    path: path)
                 else { return }
 
                 // Security: autoconnect only to previously trusted gateways (stored TLS pin).
@@ -759,11 +779,11 @@ final class GatewayConnectionController {
         return components.url
     }
 
+    /// Single normalization rule, shared with the deep-link parser. A traversal path
+    /// degrades to "no path" here; call sites that must refuse it check `normalizePath`
+    /// for `.invalid` before reaching this point.
     static func normalizedGatewayPath(_ raw: String) -> String {
-        var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, path != "/" else { return "" }
-        if !path.hasPrefix("/") { path = "/" + path }
-        return path
+        GatewayConnectDeepLink.normalizePath(raw).value ?? ""
     }
 
     private func resolveManualUseTLS(host: String, useTLS: Bool) -> Bool {
@@ -853,8 +873,17 @@ final class GatewayConnectionController {
         }
     }
 
-    private func manualStableID(host: String, port: Int) -> String {
-        "manual|\(host.lowercased())|\(port)"
+    /// Two gateways can share host:port behind a reverse proxy and differ only by route,
+    /// so the path takes part in the identity. Pathless IDs keep their historical form so
+    /// TLS pins stored by earlier versions still resolve.
+    static func manualStableID(host: String, port: Int, path: String? = nil) -> String {
+        let base = "manual|\(host.lowercased())|\(port)"
+        guard let path = GatewayConnectDeepLink.normalizePath(path).value else { return base }
+        return "\(base)|\(path)"
+    }
+
+    private func manualStableID(host: String, port: Int, path: String? = nil) -> String {
+        Self.manualStableID(host: host, port: port, path: path)
     }
 
     private func makeConnectOptions(stableID: String?) -> GatewayConnectOptions {

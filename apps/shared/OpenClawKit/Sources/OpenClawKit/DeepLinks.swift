@@ -9,14 +9,26 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
     public let host: String
     public let port: Int
     public let tls: Bool
+    /// Route path of the gateway websocket (e.g. `/gw-secret/`), when the gateway is
+    /// published behind a reverse proxy that only forwards one location. `nil` = root.
+    public let path: String?
     public let bootstrapToken: String?
     public let token: String?
     public let password: String?
 
-    public init(host: String, port: Int, tls: Bool, bootstrapToken: String?, token: String?, password: String?) {
+    public init(
+        host: String,
+        port: Int,
+        tls: Bool,
+        path: String? = nil,
+        bootstrapToken: String?,
+        token: String?,
+        password: String?)
+    {
         self.host = host
         self.port = port
         self.tls = tls
+        self.path = path
         self.bootstrapToken = bootstrapToken
         self.token = token
         self.password = password
@@ -24,7 +36,29 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
 
     public var websocketURL: URL? {
         let scheme = self.tls ? "wss" : "ws"
-        return URL(string: "\(scheme)://\(self.host):\(self.port)")
+        return URL(string: "\(scheme)://\(self.host):\(self.port)\(self.path ?? "")")
+    }
+
+    public enum PathNormalization: Sendable, Equatable {
+        case absent
+        case value(String)
+        case invalid
+
+        public var value: String? {
+            if case let .value(path) = self { return path }
+            return nil
+        }
+    }
+
+    /// Normalize a gateway route path: blank and `/` mean "no path", a leading slash is
+    /// enforced, and traversal segments are refused instead of being silently rewritten.
+    public static func normalizePath(_ raw: String?) -> PathNormalization {
+        guard let raw else { return .absent }
+        var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, path != "/" else { return .absent }
+        if path.contains("..") { return .invalid }
+        if !path.hasPrefix("/") { path = "/" + path }
+        return .value(path)
     }
 
     /// Parse a device-pair setup code (base64url-encoded JSON: `{url, bootstrapToken?, token?, password?}`).
@@ -42,6 +76,8 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
         if !tls, !LoopbackHost.isLoopbackHost(hostname) {
             return nil
         }
+        let normalizedPath = self.normalizePath(parsed.path)
+        guard normalizedPath != .invalid else { return nil }
         let port = parsed.port ?? (tls ? 443 : 18789)
         let bootstrapToken = json["bootstrapToken"] as? String
         let token = json["token"] as? String
@@ -50,6 +86,7 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
             host: hostname,
             port: port,
             tls: tls,
+            path: normalizedPath.value,
             bootstrapToken: bootstrapToken,
             token: token,
             password: password)
@@ -144,11 +181,14 @@ public enum DeepLinkParser {
             if !tls, !LoopbackHost.isLoopbackHost(hostParam) {
                 return nil
             }
+            let normalizedPath = GatewayConnectDeepLink.normalizePath(query["path"])
+            guard normalizedPath != .invalid else { return nil }
             return .gateway(
                 .init(
                     host: hostParam,
                     port: port,
                     tls: tls,
+                    path: normalizedPath.value,
                     bootstrapToken: nil,
                     token: query["token"],
                     password: query["password"]))
