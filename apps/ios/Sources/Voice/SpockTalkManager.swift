@@ -795,7 +795,11 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         }
         self.engine.connect(self.musicPlayer, to: self.engine.mainMixerNode, format: playback)
 
-        let inputFormat = input.inputFormat(forBus: 0)
+        // With voice processing enabled, AURemoteIO emits the AEC-processed
+        // stream on bus 0's *output* side; inputFormat(forBus:) still reports
+        // the raw hardware format, so a tap installed with it delivers
+        // silent/malformed buffers even though the graph looks fine.
+        let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw NSError(
                 domain: "SpockTalk",
@@ -877,12 +881,19 @@ final class SpockTalkAudioTapLifecycle: @unchecked Sendable {
 
 /// Converts mic buffers to PCM16 24 kHz mono and streams them to the realtime
 /// WebSocket. Runs on the audio tap thread; internally serialized by the tap.
-private final class SpockMicSender: @unchecked Sendable {
+///
+/// Internal (not private) so `@testable import` can exercise the float ->
+/// PCM16 conversion and payload framing directly from unit tests.
+final class SpockMicSender: @unchecked Sendable {
     private let converter: AVAudioConverter
     private let outputFormat: AVAudioFormat
     private let webSocket: URLSessionWebSocketTask?
     var onLevel: (@Sendable (Float) -> Void)?
     var muted = false
+    /// Test seam: quando impostato, riceve il payload JSON esatto invece di
+    /// inviarlo sul WebSocket reale. Il codice di produzione non lo imposta
+    /// mai; lo usa solo SpockMicSenderConversionTests via @testable import.
+    var testSendOverride: (@Sendable (String) -> Void)?
 
     init?(inputFormat: AVAudioFormat, webSocket: URLSessionWebSocketTask?) {
         guard let output = AVAudioFormat(
@@ -936,6 +947,10 @@ private final class SpockMicSender: @unchecked Sendable {
         guard let json = try? JSONSerialization.data(withJSONObject: payload),
               let text = String(data: json, encoding: .utf8)
         else { return }
+        if let testSendOverride {
+            testSendOverride(text)
+            return
+        }
         self.webSocket?.send(.string(text)) { _ in }
     }
 }
