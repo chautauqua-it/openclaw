@@ -84,7 +84,7 @@ struct SettingsTab: View {
 
                         if !self.isGatewayConnected {
                             Text(
-                                "1. Open a chat with your OpenClaw agent and send /pair\n"
+                                "1. Open a chat with your Iànua agent and send /pair\n"
                                     + "2. Copy the setup code it returns\n"
                                     + "3. Paste here and tap Connect\n"
                                     + "4. Back in that chat, run /pair approve")
@@ -315,7 +315,7 @@ struct SettingsTab: View {
                         self.featureToggle(
                             "Talk Mode",
                             isOn: self.$talkEnabled,
-                            help: "Enables voice conversation mode with your connected OpenClaw agent.")
+                            help: "Enables voice conversation mode with your connected Iànua agent.")
                         { newValue in
                             self.appModel.setTalkEnabled(newValue)
                         }
@@ -341,7 +341,7 @@ struct SettingsTab: View {
                             "Allow Camera",
                             isOn: self.$cameraEnabled,
                             help: "Allows the gateway to request photos or short video clips "
-                                + "while OpenClaw is foregrounded.")
+                                + "while Iànua is foregrounded.")
 
                         HStack(spacing: 8) {
                             Text("Location Access")
@@ -349,7 +349,7 @@ struct SettingsTab: View {
                             Button {
                                 self.activeFeatureHelp = FeatureHelp(
                                     title: "Location Access",
-                                    message: "Controls location permissions for OpenClaw. "
+                                    message: "Controls location permissions for Iànua. "
                                         + "Off disables location tools, While Using enables "
                                         + "foreground location, and Always enables "
                                         + "background location.")
@@ -371,7 +371,7 @@ struct SettingsTab: View {
                         self.featureToggle(
                             "Prevent Sleep",
                             isOn: self.$preventSleep,
-                            help: "Keeps the screen awake while OpenClaw is open.")
+                            help: "Keeps the screen awake while Iànua is open.")
 
                         DisclosureGroup("Advanced") {
                             VStack(alignment: .leading, spacing: 8) {
@@ -413,7 +413,7 @@ struct SettingsTab: View {
                                     self.activeFeatureHelp = FeatureHelp(
                                         title: "Default Share Instruction",
                                         message: "Appends this instruction when sharing content "
-                                            + "into OpenClaw from iOS.")
+                                            + "into Iànua from iOS.")
                                 } label: {
                                     Image(systemName: "info.circle")
                                         .foregroundStyle(.secondary)
@@ -444,7 +444,7 @@ struct SettingsTab: View {
                             .truncationMode(.middle)
                         LabeledContent("Device", value: DeviceInfoHelper.deviceFamily())
                         LabeledContent("Platform", value: DeviceInfoHelper.platformStringForDisplay())
-                        LabeledContent("OpenClaw", value: DeviceInfoHelper.openClawVersionString())
+                        LabeledContent("Iànua", value: DeviceInfoHelper.openClawVersionString())
                     }
                 }
             }
@@ -1001,7 +1001,7 @@ struct SettingsTab: View {
         guard !trimmed.isEmpty else { return nil }
         let lower = trimmed.lowercased()
         if lower.contains("pairing required") {
-            return "Pairing required. Go back to your OpenClaw chat and run /pair approve, then tap Connect again."
+            return "Pairing required. Go back to your Iànua chat and run /pair approve, then tap Connect again."
         }
         if lower.contains("device nonce required") || lower.contains("device nonce mismatch") {
             return "Secure handshake failed. Make sure Tailscale is connected, then tap Connect again."

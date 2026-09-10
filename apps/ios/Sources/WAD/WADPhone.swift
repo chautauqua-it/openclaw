@@ -1521,7 +1521,7 @@ struct WADPhoneSheet: View {
                 VStack(spacing: 8) {
                     Text("Accesso alla rubrica negato")
                         .font(.subheadline.weight(.semibold))
-                    Text("Autorizza i contatti in Impostazioni > OpenClaw.")
+                    Text("Autorizza i contatti in Impostazioni > Iànua.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

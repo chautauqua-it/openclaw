@@ -98,7 +98,7 @@ final class WADCarPlaySceneDelegate: UIResponder, @preconcurrency CPTemplateAppl
         if book.contactsDenied {
             rubricaItems = [CPListItem(
                 text: "Accesso alla rubrica negato",
-                detailText: "Autorizza i contatti in Impostazioni > OpenClaw")]
+                detailText: "Autorizza i contatti in Impostazioni > Iànua")]
         } else if book.deviceContacts.isEmpty {
             rubricaItems = [CPListItem(text: "Rubrica vuota", detailText: nil)]
         } else {
