@@ -47,5 +47,10 @@
 --header ignore
 --allman false
 
+# Regole abilitate per default dalle versioni recenti di SwiftFormat: senza
+# questo pin il contratto di formattazione cambia da solo quando si aggiorna
+# il tool e la build phase boccia codice che non e' stato toccato.
+--disable wrapIfStatementBodies,wrapIfExpressionBodies,redundantSwiftUIGroup
+
 # Exclusions
 --exclude .build,.swiftpm,DerivedData,node_modules,dist,coverage,xcuserdata,Peekaboo,Swabble,apps/android,apps/ios,apps/shared,apps/macos/Sources/OpenClawProtocol,apps/macos/Sources/OpenClaw/HostEnvSecurityPolicy.generated.swift

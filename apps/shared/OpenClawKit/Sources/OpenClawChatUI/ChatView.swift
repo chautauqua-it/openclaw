@@ -97,11 +97,11 @@ public struct OpenClawChatView: View {
                     self.messageListRows
 
                     Color.clear
-                    #if os(macOS)
-                        .frame(height: Layout.messageListPaddingBottom)
-                    #else
-                        .frame(height: Layout.messageListPaddingBottom + 1)
-                    #endif
+                        #if os(macOS)
+                            .frame(height: Layout.messageListPaddingBottom)
+                        #else
+                            .frame(height: Layout.messageListPaddingBottom + 1)
+                        #endif
                         .id(self.scrollerBottomID)
                 }
                 // Use scroll targets for stable auto-scroll without ScrollViewReader relayout glitches.
@@ -113,11 +113,11 @@ public struct OpenClawChatView: View {
             .scrollDismissesKeyboard(.interactively)
             #endif
             // Keep the scroll pinned to the bottom for new messages.
-                .scrollPosition(id: self.$scrollPosition, anchor: .bottom)
-                .onChange(of: self.scrollPosition) { _, position in
-                    guard let position else { return }
-                    self.isPinnedToBottom = position == self.scrollerBottomID
-                }
+            .scrollPosition(id: self.$scrollPosition, anchor: .bottom)
+            .onChange(of: self.scrollPosition) { _, position in
+                guard let position else { return }
+                self.isPinnedToBottom = position == self.scrollerBottomID
+            }
 
             if self.viewModel.isLoading {
                 ProgressView()
