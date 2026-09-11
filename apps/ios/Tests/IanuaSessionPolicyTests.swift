@@ -21,13 +21,24 @@ import Testing
         #expect(
             IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 401, data: data) ==
                 IanuaSessionStore.expiredMessage)
-        #expect(
-            IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 403, data: data) ==
-                IanuaSessionStore.expiredMessage)
         #expect(IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 401))
-        #expect(IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 403))
         #expect(!IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 500))
         #expect(IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 200, data: data) == nil)
+    }
+
+    /// Il 403 è una capability negata, non una sessione scaduta: non deve mai
+    /// far scattare il logout né mostrare "esegui di nuovo il login".
+    @Test func forbiddenNeverExpiresTheSession() {
+        let explained = Data(#"{"error":"realtime non abilitato per questo utente"}"#.utf8)
+        #expect(!IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: 403))
+        #expect(IanuaRealtimeHTTPPolicy.isForbidden(statusCode: 403))
+        #expect(!IanuaRealtimeHTTPPolicy.isForbidden(statusCode: 401))
+        #expect(
+            IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 403, data: explained) ==
+                "realtime non abilitato per questo utente")
+        #expect(
+            IanuaRealtimeHTTPPolicy.errorMessage(statusCode: 403, data: Data()) ==
+                IanuaRealtimeHTTPPolicy.forbiddenMessage)
     }
 
     @Test func clearRemovesOnlyIanuaSessionCookies() throws {

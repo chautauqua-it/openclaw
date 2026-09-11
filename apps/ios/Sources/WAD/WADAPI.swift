@@ -4,6 +4,9 @@ import Foundation
 enum WADAPIError: LocalizedError {
     case unreachable
     case unauthorized
+    /// 403: autenticati ma senza diritto su QUESTA capability. Non è una
+    /// sessione scaduta e non deve mai farne scattare la pulizia.
+    case forbidden(String)
     case server(String)
     case decoding(String)
 
@@ -13,6 +16,8 @@ enum WADAPIError: LocalizedError {
             "Iànua non raggiungibile. Controlla la connessione Internet e riprova."
         case .unauthorized:
             "Sessione scaduta. Esegui di nuovo il login."
+        case let .forbidden(message):
+            message
         case let .server(message):
             message
         case let .decoding(message):
@@ -59,14 +64,31 @@ enum IanuaRealtimeEndpointPolicy {
 }
 
 enum IanuaRealtimeHTTPPolicy {
+    /// Il messaggio quando il server dice 403 senza spiegare.
+    static let forbiddenMessage = "Questa funzione non è abilitata per il tuo account Iànua."
+
+    /// SOLO il 401 invalida la sessione. Il server risponde 403 a chi è
+    /// autenticato ma fuori dall'allowlist di una singola capability (es.
+    /// realtime): trattarlo come sessione scaduta azzerava Keychain e cookie
+    /// condivisi, buttando l'utente fuori dall'intera app — chat compresa —
+    /// solo per aver aperto una funzione non abilitata.
     static func requiresLogin(statusCode: Int) -> Bool {
-        statusCode == 401 || statusCode == 403
+        statusCode == 401
+    }
+
+    static func isForbidden(statusCode: Int) -> Bool {
+        statusCode == 403
+    }
+
+    static func serverError(from data: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
     }
 
     static func errorMessage(statusCode: Int, data: Data) -> String? {
         guard !(200...299).contains(statusCode) else { return nil }
         if self.requiresLogin(statusCode: statusCode) { return IanuaSessionStore.expiredMessage }
-        let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+        let message = self.serverError(from: data)
+        if self.isForbidden(statusCode: statusCode) { return message ?? self.forbiddenMessage }
         return message ?? "Errore Iànua Realtime \(statusCode)."
     }
 }
@@ -151,13 +173,23 @@ actor WADAPIClient {
             guard let http = response as? HTTPURLResponse else {
                 throw WADAPIError.server("Risposta WAD sconosciuta")
             }
+            // Durante il login non esiste ancora una sessione da invalidare:
+            // 401 e 403 sono entrambi "queste credenziali non entrano".
+            if options.login,
+               IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode)
+               || IanuaRealtimeHTTPPolicy.isForbidden(statusCode: http.statusCode)
+            {
+                let message = IanuaRealtimeHTTPPolicy.serverError(from: data)
+                throw WADAPIError.server(message ?? "Credenziali non valide")
+            }
             if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
-                if options.login {
-                    let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-                    throw WADAPIError.server(message ?? "Credenziali non valide")
-                }
                 IanuaSessionStore.clear()
                 throw WADAPIError.unauthorized
+            }
+            if IanuaRealtimeHTTPPolicy.isForbidden(statusCode: http.statusCode) {
+                throw WADAPIError.forbidden(
+                    IanuaRealtimeHTTPPolicy.serverError(from: data)
+                        ?? IanuaRealtimeHTTPPolicy.forbiddenMessage)
             }
             if !(200...299).contains(http.statusCode) {
                 let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String

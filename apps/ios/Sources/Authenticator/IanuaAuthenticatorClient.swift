@@ -128,6 +128,11 @@ actor IanuaAuthenticatorClient {
                 IanuaSessionStore.clear()
                 throw WADAPIError.unauthorized
             }
+            if IanuaRealtimeHTTPPolicy.isForbidden(statusCode: http.statusCode) {
+                throw WADAPIError.forbidden(
+                    IanuaRealtimeHTTPPolicy.serverError(from: data)
+                        ?? IanuaRealtimeHTTPPolicy.forbiddenMessage)
+            }
             if http.statusCode == 428 { throw IanuaAuthenticatorError.enrollmentRequired }
             guard (200...299).contains(http.statusCode) else {
                 let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

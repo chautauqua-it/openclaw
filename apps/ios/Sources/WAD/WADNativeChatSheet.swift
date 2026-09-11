@@ -194,10 +194,13 @@ private actor IanuaChatAPI {
                     try await Task.sleep(for: .milliseconds(250 * (attempt + 1)))
                     continue
                 }
-                let message = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
+                let message = IanuaRealtimeHTTPPolicy.serverError(from: body)
                 if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
                     IanuaSessionStore.clear()
                     throw WADAPIError.unauthorized
+                }
+                if IanuaRealtimeHTTPPolicy.isForbidden(statusCode: http.statusCode) {
+                    throw WADAPIError.forbidden(message ?? IanuaRealtimeHTTPPolicy.forbiddenMessage)
                 }
                 throw WADAPIError.server(message ?? "Errore Iànua \(http.statusCode)")
             } catch let error as URLError
@@ -220,6 +223,10 @@ private actor IanuaChatAPI {
             return .valid
         } catch WADAPIError.unauthorized {
             return .unauthorized
+        } catch WADAPIError.forbidden {
+            // Un 403 dimostra che la sessione è viva: il server ha riconosciuto
+            // l'utente e gli ha negato solo la risorsa. Non è un logout.
+            return .valid
         } catch {
             return .unreachable
         }
@@ -416,6 +423,16 @@ private actor IanuaChatAPI {
         }
     }
 
+    /// Dopo l'attivazione via QR la sessione è già nel cookie jar condiviso ed è
+    /// identica a quella di un login: manca solo il primo snapshot dei canali.
+    func adoptProvisionedSession() async {
+        self.memberships = nil
+        self.error = nil
+        let result = await self.reload()
+        if result != .unauthorized { self.phase = .loggedIn }
+        WADCallCenter.shared.refreshVoipTokenRegistration()
+    }
+
     func logout() async {
         await IanuaChatAPI.shared.logout()
         self.payload = nil
@@ -469,6 +486,8 @@ private struct IanuaLoginView: View {
     @EnvironmentObject private var model: IanuaChatModel
     @State private var email = ""
     @State private var password = ""
+    @State private var showProvisioning = false
+    @ObservedObject private var inbox = IanuaProvisioningInbox.shared
 
     var body: some View {
         VStack(spacing: 20) {
@@ -542,9 +561,30 @@ private struct IanuaLoginView: View {
                 .controlSize(.large)
                 .padding(.horizontal, 32)
                 .disabled(self.email.isEmpty || self.password.isEmpty || self.model.busy)
+
+                Button {
+                    self.showProvisioning = true
+                } label: {
+                    Label("Attiva con QR", systemImage: "qrcode.viewfinder")
+                }
+                .font(.footnote)
+                .disabled(self.model.busy)
             }
 
             Spacer()
+        }
+        .sheet(isPresented: self.$showProvisioning) {
+            NavigationStack {
+                IanuaProvisioningView {
+                    Task { await self.model.adoptProvisionedSession() }
+                }
+            }
+        }
+        // Un link `ianua://provision` non attiva niente da solo: apre questa
+        // schermata e lascia la conferma alla persona.
+        .onAppear { if self.inbox.pending != nil { self.showProvisioning = true } }
+        .onChange(of: self.inbox.pending) { _, pending in
+            if pending != nil { self.showProvisioning = true }
         }
         .onChange(of: self.email) { self.model.memberships = nil }
         .onChange(of: self.password) { self.model.memberships = nil }
