@@ -19,6 +19,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IOS_DIR="${ROOT_DIR}/apps/ios"
 BUILD_DIR="${IOS_DIR}/build"
 BETA_XCCONFIG="${IOS_DIR}/build/BetaRelease.xcconfig"
+BETA_ENTITLEMENTS="${IOS_DIR}/build/BetaRelease.entitlements"
 TEAM_HELPER="${ROOT_DIR}/scripts/ios-team-id.sh"
 VERSION_HELPER="${ROOT_DIR}/scripts/ios-write-version-xcconfig.sh"
 IOS_VERSION_HELPER="${ROOT_DIR}/scripts/ios-version.ts"
@@ -31,6 +32,7 @@ PUSH_RELAY_BASE_URL_XCCONFIG=""
 PUSH_TRANSPORT="${IOS_BETA_PUSH_TRANSPORT:-relay}"
 PUSH_XCCONFIG_BLOCK=""
 IOS_VERSION=""
+BETA_BUNDLE_ID_BASE="${IOS_BETA_BUNDLE_ID_BASE:-it.differen.ianua}"
 
 prepare_build_dir() {
   if [[ -L "${BUILD_DIR}" ]]; then
@@ -173,17 +175,32 @@ write_generated_file "${BETA_XCCONFIG}" <<EOF
 OPENCLAW_CODE_SIGN_STYLE = Automatic
 OPENCLAW_DEVELOPMENT_TEAM = ${TEAM_ID}
 OPENCLAW_IOS_SELECTED_TEAM = ${TEAM_ID}
-OPENCLAW_APP_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}
-OPENCLAW_SHARE_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.share
-OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.activitywidget
-OPENCLAW_INTENTS_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.intents
-OPENCLAW_WATCH_APP_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp
-OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp.extension
-OPENCLAW_WATCH_CONTROL_WIDGET_BUNDLE_ID = ${IOS_BETA_BUNDLE_ID_BASE:-ai.openclaw.client}.watchkitapp.controlwidget
+OPENCLAW_APP_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}
+OPENCLAW_SHARE_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.share
+OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.activitywidget
+OPENCLAW_INTENTS_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.intents
+OPENCLAW_WATCH_APP_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.watchkitapp
+OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.watchkitapp.extension
+OPENCLAW_WATCH_CONTROL_WIDGET_BUNDLE_ID = ${BETA_BUNDLE_ID_BASE}.watchkitapp.controlwidget
+OPENCLAW_CODE_SIGN_ENTITLEMENTS = build/BetaRelease.entitlements
 OPENCLAW_APP_PROFILE =
 OPENCLAW_SHARE_PROFILE =
 OPENCLAW_INTENTS_PROFILE =
 ${PUSH_XCCONFIG_BLOCK}
+EOF
+
+# Standard TestFlight builds intentionally omit the CarPlay entitlement until
+# Apple grants it to the Differen team. Local/dev builds keep using the source
+# entitlement file and can continue exercising the CarPlay implementation.
+write_generated_file "${BETA_ENTITLEMENTS}" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>aps-environment</key>
+  <string>production</string>
+</dict>
+</plist>
 EOF
 
 (

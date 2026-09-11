@@ -77,6 +77,7 @@ apps/ios/fastlane/screenshots/
 apps/ios/fastlane/test_output/
 apps/ios/fastlane/logs/
 apps/ios/fastlane/.env
+apps/ios/fastlane/.env.*
 
 # fastlane build artifacts (local)
 apps/ios/*.ipa

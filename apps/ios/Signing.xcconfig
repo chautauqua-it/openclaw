@@ -13,6 +13,7 @@ OPENCLAW_WATCH_APP_BUNDLE_ID = ai.openclaw.client.watchkitapp
 OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ai.openclaw.client.watchkitapp.extension
 OPENCLAW_ACTIVITY_WIDGET_BUNDLE_ID = ai.openclaw.client.activitywidget
 OPENCLAW_INTENTS_BUNDLE_ID = ai.openclaw.client.intents
+OPENCLAW_CODE_SIGN_ENTITLEMENTS = Sources/OpenClaw.entitlements
 
 OPENCLAW_APP_PROFILE = ai.openclaw.client Development
 OPENCLAW_SHARE_PROFILE = ai.openclaw.client.share Development

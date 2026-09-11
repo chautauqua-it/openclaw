@@ -110,3 +110,39 @@ describe("pinIosVersion", () => {
     ).toBe("stale\n");
   });
 });
+
+describe("iOS beta distribution defaults", () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+
+  it("uses the registered Iànua namespace throughout the beta pipeline", () => {
+    const prepare = fs.readFileSync(
+      path.join(repositoryRoot, "scripts/ios-beta-prepare.sh"),
+      "utf8",
+    );
+    const fastfile = fs.readFileSync(
+      path.join(repositoryRoot, "apps/ios/fastlane/Fastfile"),
+      "utf8",
+    );
+    const appfile = fs.readFileSync(path.join(repositoryRoot, "apps/ios/fastlane/Appfile"), "utf8");
+
+    expect(prepare).toContain("IOS_BETA_BUNDLE_ID_BASE:-it.differen.ianua");
+    expect(fastfile).toContain('\"it.differen.ianua\"');
+    expect(appfile).toContain('\"it.differen.ianua\"');
+  });
+
+  it("keeps CarPlay out of standard TestFlight entitlements", () => {
+    const prepare = fs.readFileSync(
+      path.join(repositoryRoot, "scripts/ios-beta-prepare.sh"),
+      "utf8",
+    );
+    const project = fs.readFileSync(path.join(repositoryRoot, "apps/ios/project.yml"), "utf8");
+
+    expect(prepare).toContain("OPENCLAW_CODE_SIGN_ENTITLEMENTS = build/BetaRelease.entitlements");
+    const entitlementBlock = prepare.match(
+      /write_generated_file "\$\{BETA_ENTITLEMENTS\}" <<'EOF'\n([\s\S]*?)\nEOF/,
+    )?.[1];
+    expect(entitlementBlock).toContain("<key>aps-environment</key>");
+    expect(entitlementBlock).not.toContain("com.apple.developer.carplay");
+    expect(project).toContain('CODE_SIGN_ENTITLEMENTS: "$(OPENCLAW_CODE_SIGN_ENTITLEMENTS)"');
+  });
+});

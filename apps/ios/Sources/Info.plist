@@ -34,6 +34,14 @@
 				<string>openclaw</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>it.differen.ianua</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ianua</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(OPENCLAW_BUILD_VERSION)</string>
@@ -49,7 +57,7 @@
 		<string>_openclaw-gw._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>OpenClaw can capture photos or short video clips when requested via the gateway.</string>
+	<string>Ianua usa la fotocamera per leggere il QR di attivazione del dispositivo e per foto o brevi video richiesti dall'assistente.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>OpenClaw usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.</string>
 	<key>NSFaceIDUsageDescription</key>

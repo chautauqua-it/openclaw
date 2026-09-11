@@ -4207,6 +4207,13 @@ extension NodeAppModel {
     }
 
     func handleDeepLink(url: URL) async {
+        // `ianua://provision` ha uno schema suo e non passa da DeepLinkParser:
+        // non esegue niente, deposita solo il link per la schermata di
+        // attivazione, che aspetta comunque la conferma della persona.
+        if let provision = IanuaProvisionLink.parse(url) {
+            IanuaProvisioningInbox.shared.submit(provision)
+            return
+        }
         guard let route = DeepLinkParser.parse(url) else { return }
 
         switch route {

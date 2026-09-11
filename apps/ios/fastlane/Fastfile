@@ -10,7 +10,7 @@ def beta_app_identifier
     value = ENV[key]
     return value.strip if value && !value.strip.empty?
   end
-  "ai.openclaw.client"
+  "it.differen.ianua"
 end
 
 BETA_APP_IDENTIFIER = beta_app_identifier
@@ -194,7 +194,10 @@ def prepare_beta_release!(version:, build_number:)
 end
 
 def asc_auth_export_xcargs(api_key)
-  return "-allowProvisioningUpdates" if api_key.nil?
+  # La chiave ASC autentica upload e build number, ma i certificati di distribuzione
+  # cloud-managed sono accessibili solo a un Apple ID con ruolo alto: passando le
+  # -authenticationKey* a xcodebuild la firma usa la chiave e Apple risponde 403.
+  return "-allowProvisioningUpdates" if api_key.nil? || ENV["IOS_SIGNING_USE_XCODE_ACCOUNT"] == "1"
 
   key_id = api_key[:key_id]
   issuer_id = api_key[:issuer_id]

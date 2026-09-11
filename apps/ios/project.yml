@@ -99,7 +99,7 @@ targets:
     settings:
       base:
         CODE_SIGN_IDENTITY: "Apple Development"
-        CODE_SIGN_ENTITLEMENTS: Sources/OpenClaw.entitlements
+        CODE_SIGN_ENTITLEMENTS: "$(OPENCLAW_CODE_SIGN_ENTITLEMENTS)"
         CODE_SIGN_STYLE: "$(OPENCLAW_CODE_SIGN_STYLE)"
         DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
         PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_APP_BUNDLE_ID)"
@@ -132,6 +132,12 @@ targets:
           - CFBundleURLName: ai.openclaw.ios
             CFBundleURLSchemes:
               - openclaw
+          # Percorso secondario dell'attivazione: il QR si legge in-app. Uno
+          # schema custom lo può registrare chiunque, quindi `ianua://provision`
+          # apre soltanto la schermata e non attiva mai nulla da solo.
+          - CFBundleURLName: it.differen.ianua
+            CFBundleURLSchemes:
+              - ianua
         CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
         OpenClawCanonicalVersion: "$(OPENCLAW_IOS_VERSION)"
         CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
@@ -158,7 +164,7 @@ targets:
           NSAllowsLocalNetworking: true
         NSBonjourServices:
           - _openclaw-gw._tcp
-        NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
+        NSCameraUsageDescription: Ianua usa la fotocamera per leggere il QR di attivazione del dispositivo e per foto o brevi video richiesti dall'assistente.
         NSContactsUsageDescription: OpenClaw usa la rubrica per mostrarti i contatti nel telefono WAD e chiamarli da lì.
         NSLocationWhenInUseUsageDescription: OpenClaw uses your location when you allow location sharing.
         NSLocationAlwaysAndWhenInUseUsageDescription: OpenClaw can share your location in the background when you enable Always.
