@@ -28,6 +28,10 @@ struct RootCanvas: View {
     @State private var wadSiriLaunchSignal = WADSiriLaunchSignal.shared
     @State private var showSpockTalk: Bool = false
     @State private var authenticatorPresentation = AuthenticatorPresentation.shared
+    /// Un link `ianua://provision` arriva qui anche a freddo (Camera app, app
+    /// non ancora aperta su Chat): senza questo listener resta depositato in
+    /// IanuaProvisioningInbox senza che nessuno schermo lo mostri mai.
+    @ObservedObject private var provisioningInbox = IanuaProvisioningInbox.shared
 
     private enum PresentedSheet: Identifiable {
         case wadChat
@@ -155,6 +159,11 @@ struct RootCanvas: View {
         .onChange(of: self.authenticatorPresentation.isPresented) { _, newValue in
             guard newValue else { return }
             self.dismissConflictsForAuthenticator()
+        }
+        .onAppear { self.presentPendingProvisioningIfNeeded() }
+        .onChange(of: self.provisioningInbox.pending) { _, pending in
+            guard pending != nil else { return }
+            self.presentPendingProvisioningIfNeeded()
         }
         .fullScreenCover(isPresented: self.$showSpockTalk) {
             SpockTalkView(accent: self.appModel.seamColor)
@@ -297,6 +306,16 @@ struct RootCanvas: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             self.authenticatorPresentation.isPresented = true
         }
+    }
+
+    /// Apre la chat (che mostra subito la schermata di attivazione, vedi
+    /// `IanuaLoginView`) ogni volta che un link `ianua://provision` è in
+    /// attesa — indipendentemente da dove si trovava la persona quando ha
+    /// inquadrato il QR.
+    private func presentPendingProvisioningIfNeeded() {
+        guard self.provisioningInbox.pending != nil else { return }
+        self.showSpockTalk = false
+        self.presentedSheet = .wadChat
     }
 
     private func presentPendingWADSiriRoute() {
