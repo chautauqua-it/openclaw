@@ -1,5 +1,8 @@
-Maintenance update for the current OpenClaw development release.
+Maintenance update for the current Iànua development release.
 
+- Added one-shot QR device activation: scan the activation code from any screen, in or out of the app, and Iànua opens the activation screen and waits for your confirmation before enabling anything (build 5).
+- Fixed chat bubble alignment: your own messages are now identified by operator role instead of user id, so they no longer appear on the wrong side of the conversation (build 5).
+- Completed the de-branding of the visible texts, including the system permission prompts (build 5).
 - Reduced the Authenticator action-summary font for a more compact two-digit approval card.
 - Restored the native Iànua SIP contract so the phone can retrieve its configuration and DND state through the authenticated mobile routes.
 - Restored the tenant-bound internal directory and suppressed false “call failed” banners after a SIP call had already connected successfully.
@@ -8,7 +11,7 @@ Maintenance update for the current OpenClaw development release.
 - Prevented Iànua Realtime from crashing while rebuilding or tearing down its audio graph by tracking microphone and playback taps explicitly.
 - Recovered cleanly from revoked Iànua sessions returned as either 401 or 403: Chat now returns to login, SIP reports that access is required, and Realtime rejects stale private endpoint overrides instead of showing unrelated configuration errors.
 - Redesigned the Authenticator approval card: the action summary and match-code entry are front and center, while technical context (tenant, environment, audience, initiator device, request hash) moved into a collapsed Details section (build 93).
-- Tapping an Ianua "Sblocco richiesto" push now opens the Authenticator screen directly, including when the app is connected to the gateway and the push arrives as a local notification (build 90).
-- Rebranded the mobile app experience as Ianua, including app and extension display names, Ianua app icons, and the phone screen mark.
+- Tapping an Iànua "Sblocco richiesto" push now opens the Authenticator screen directly, including when the app is connected to the gateway and the push arrives as a local notification (build 90).
+- Rebranded the mobile app experience as Iànua, including app and extension display names, Iànua app icons, and the phone screen mark.
 - Added presence status in the native Linphone phonebook: registered and free, not registered, busy, and DND.
-- Added the complete native Iànua chat, including direct conversations with tenant colleagues, agents, channels, groups, replies, reactions, pins, attachments, voice messages, and protected secrets.
+- Added the complete native Iànua chat, including agents, channels, groups, replies, reactions, pins, attachments, voice messages, and protected secrets.
