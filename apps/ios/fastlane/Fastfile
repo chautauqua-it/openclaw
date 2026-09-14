@@ -136,6 +136,13 @@ rescue JSON::ParserError => e
   UI.user_error!("Invalid JSON from iOS version helper: #{e.message}")
 end
 
+def read_beta_changelog
+  path = File.join(ios_root, "fastlane", "metadata", "en-US", "release_notes.txt")
+  notes = File.exist?(path) ? File.read(path).strip : ""
+  UI.user_error!("Missing TestFlight release notes: #{path}") unless env_present?(notes)
+  notes
+end
+
 def sync_ios_versioning!
   script_path = File.join(repo_root, "scripts", "ios-sync-versioning.ts")
   stdout, stderr, status = Open3.capture3(
@@ -379,6 +386,7 @@ platform :ios do
       api_key: context[:api_key],
       app_identifier: BETA_APP_IDENTIFIER,
       ipa: build[:ipa_path],
+      changelog: read_beta_changelog,
       skip_waiting_for_build_processing: true,
       uses_non_exempt_encryption: false
     )
