@@ -1,1 +1,7 @@
-OpenClaw iOS client for gateway-connected workflows. Reviewers can follow the standard onboarding and pairing flow in-app.
+Iànua is a business app: it only works against an Iànua workspace operated by the customer's organisation, so it cannot be evaluated without credentials.
+
+Please use the demo account and the workspace address provided in the App Review demo account fields. After signing in, the reviewer can browse channels and conversations, open the internal phone, and open the Authenticator screen.
+
+The internal phone requires the demo workspace to have a phone extension assigned; the Authenticator shows pending approval requests only when one has been issued by the workspace administrator.
+
+App publisher: differen srl, Genova, Italy - VAT IT02705790992.

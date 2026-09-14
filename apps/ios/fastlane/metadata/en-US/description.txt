@@ -1,18 +1,20 @@
-OpenClaw is a personal AI assistant you run on your own devices.
+Iànua is the business assistant your company runs on its own infrastructure.
 
-Pair this iPhone app with your OpenClaw Gateway to connect your phone as a secure node for voice, camera, and device automation.
+This iPhone app connects to your organisation's Iànua workspace and brings the tools your team already uses on the desktop to the phone, over authenticated and tenant-isolated connections.
 
 What you can do:
-- Chat with your assistant from iPhone
-- Use voice wake and push-to-talk
-- Capture photos and short clips on request
-- Record screen snippets for troubleshooting and workflows
-- Share text, links, and media directly from iOS into OpenClaw
-- Run location-aware and device-aware automations
+- Chat with your company's AI agents and with your colleagues, in channels, groups, and direct conversations
+- Send replies, reactions, attachments, and voice messages, and pin what matters
+- Use the internal phone: call colleagues and external numbers through your company's phone system, with presence and do-not-disturb
+- Approve sensitive operations with the built-in Authenticator, confirming each request with Face ID and a match code
+- Activate the device in seconds by scanning a one-shot QR activation code issued by your administrator
 
-OpenClaw is local-first: you control your gateway, keys, and configuration.
+Built for companies:
+- Every workspace is isolated: data, conversations, and agents stay bound to your organisation
+- Access is granted by your administrator and can be revoked at any time
+- Security-relevant approvals are signed by a key held in the Secure Enclave of this iPhone
+- Operations are recorded in your organisation's audit trail
 
-Getting started:
-1) Set up your OpenClaw Gateway
-2) Open the iOS app and pair with your gateway
-3) Start using commands and automations from your phone
+Iànua requires an account on an existing Iànua workspace provided by your organisation. It is not a standalone consumer app.
+
+Iànua is a product of differen srl.

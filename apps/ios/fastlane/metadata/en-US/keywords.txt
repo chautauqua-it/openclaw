@@ -1,1 +1,1 @@
-openclaw,ai assistant,local ai,voice assistant,automation,gateway,chat,agent,node
+business assistant,softphone,voip,sip,secure chat,authenticator,approvals,ai agent,enterprise
