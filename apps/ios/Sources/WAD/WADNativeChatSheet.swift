@@ -41,7 +41,7 @@ private struct IanuaChannel: Decodable, Identifiable, Hashable {
     let lastAt: String?
     let runStatus: IanuaRunStatus?
 
-    /// I colleghi arrivano dal server con `nome`/`email`, gli altri canali con `name`.
+    /// Alcuni canali arrivano dal server con `nome`/`email` invece di `name`.
     var name: String {
         self.rawName ?? self.nome ?? self.email ?? self.id
     }
@@ -101,10 +101,9 @@ private struct IanuaChannelPayload: Decodable {
     let agents: [IanuaChannel]
     let agentChannels: [IanuaChannel]
     let groups: [IanuaChannel]
-    let colleagues: [IanuaChannel]
     let me: IanuaMe?
     enum CodingKeys: String, CodingKey {
-        case agent, agents, groups, colleagues, me
+        case agent, agents, groups, me
         case agentChannels = "agent_channels"
     }
 }
@@ -499,7 +498,7 @@ private struct IanuaLoginView: View {
                 .accessibilityLabel("Iànua")
             Text("Iànua Chat")
                 .font(.system(.largeTitle, design: .rounded).weight(.bold))
-            Text("Assistente, agenti, gruppi e colleghi del tuo tenant")
+            Text("Assistente, agenti e gruppi del tuo tenant")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -606,7 +605,6 @@ private struct IanuaChannelListView: View {
     @AppStorage("ianua.chat.collapsed.agents") private var agentsCollapsed = false
     @AppStorage("ianua.chat.collapsed.channels") private var channelsCollapsed = false
     @AppStorage("ianua.chat.collapsed.groups") private var groupsCollapsed = false
-    @AppStorage("ianua.chat.collapsed.colleagues") private var colleaguesCollapsed = false
 
     var body: some View {
         Group {
@@ -677,7 +675,6 @@ private struct IanuaChannelListView: View {
 
     private func channelList(_ payload: IanuaChannelPayload) -> some View {
         let channels = payload.agentChannels.filter { $0.archived != true }
-        let colleagues = payload.colleagues.sorted(by: Self.recentInteractionFirst)
         return List {
             Section("Assistente") {
                 self.row(payload.agent, icon: "sparkles")
@@ -702,15 +699,6 @@ private struct IanuaChannelListView: View {
             if !payload.groups.isEmpty {
                 self.collapsibleSection("Gruppi", collapsed: self.$groupsCollapsed, channels: payload.groups) {
                     ForEach(payload.groups) { self.row($0, icon: "person.3.fill") }
-                }
-            }
-            if !colleagues.isEmpty {
-                self.collapsibleSection(
-                    "Colleghi",
-                    collapsed: self.$colleaguesCollapsed,
-                    channels: colleagues)
-                {
-                    ForEach(colleagues) { self.row($0, icon: "person.fill") }
                 }
             }
         }
@@ -759,16 +747,6 @@ private struct IanuaChannelListView: View {
         let other = channels.filter { !assigned.contains($0.id) }
         if !other.isEmpty { result.append(ChannelGroup(title: "Altri", channels: other)) }
         return result
-    }
-
-    /// Difesa client oltre all'ordinamento server: ultimo DM in alto come
-    /// WhatsApp, contatti senza storico in coda alfabetica.
-    private static func recentInteractionFirst(_ lhs: IanuaChannel, _ rhs: IanuaChannel) -> Bool {
-        let left = wadParseTimestamp(lhs.lastAt)
-        let right = wadParseTimestamp(rhs.lastAt)
-        if let left, let right, left != right { return left > right }
-        if (left != nil) != (right != nil) { return left != nil }
-        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
     }
 
     /// Sezione con header tappabile: collassa/espande il gruppo e ricorda lo
@@ -1197,7 +1175,11 @@ private struct IanuaThreadView: View {
         !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !self.pendingAttachments.isEmpty
     }
 
+    /// La risposta dell'agente viene salvata con lo `user_id` di chi l'ha
+    /// interpellato: senza il filtro sul ruolo ogni messaggio del canale
+    /// risulterebbe "mio" e finirebbe incolonnato a destra.
     private func isMine(_ message: IanuaMessage) -> Bool {
+        guard message.role == "operatore" else { return false }
         guard let mine = self.model.myUserId, let userId = message.userId else { return false }
         return userId == mine
     }
