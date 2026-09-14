@@ -428,4 +428,30 @@ platform :ios do
     asc_api_key
     UI.success("App Store Connect API auth loaded successfully.")
   end
+
+  # `beta` uploads with skip_waiting_for_build_processing, so a successful upload
+  # does not mean testers can install the build yet.
+  desc "Report TestFlight processing state of the most recent builds"
+  lane :beta_status do
+    asc_api_key
+    app = Spaceship::ConnectAPI::App.find(BETA_APP_IDENTIFIER)
+    UI.user_error!("App #{BETA_APP_IDENTIFIER} not visible with this API key.") if app.nil?
+
+    builds = app.get_builds(includes: "preReleaseVersion,buildBetaDetail", limit: 5)
+    if builds.empty?
+      UI.important("No builds found for #{BETA_APP_IDENTIFIER}.")
+      next
+    end
+
+    builds.each do |build|
+      short = build.pre_release_version&.version || "?"
+      detail = build.build_beta_detail
+      UI.message(
+        "build #{short} (#{build.version}) uploaded=#{build.uploaded_date} " \
+        "processing=#{build.processing_state} " \
+        "internal=#{detail&.internal_build_state} external=#{detail&.external_build_state} " \
+        "expired=#{build.expired}"
+      )
+    end
+  end
 end
