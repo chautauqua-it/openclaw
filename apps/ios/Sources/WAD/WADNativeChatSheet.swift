@@ -100,12 +100,24 @@ private struct IanuaChannelPayload: Decodable {
     let agent: IanuaChannel
     let agents: [IanuaChannel]
     let agentChannels: [IanuaChannel]
-    let groups: [IanuaChannel]
     let me: IanuaMe?
     enum CodingKeys: String, CodingKey {
-        case agent, agents, groups, me
+        case agent, agents, me
         case agentChannels = "agent_channels"
     }
+}
+
+/// Separatori di canale per-utente, sola fonte di verità del web
+/// (public/operatore.html, renderSide): il client non definisce più default.
+private struct IanuaChatLayoutSeparator: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let channels: [String]
+}
+
+private struct IanuaChatLayout: Decodable {
+    let separators: [IanuaChatLayoutSeparator]?
+    let archived: [String]?
 }
 
 private struct IanuaAttachment: Decodable, Identifiable {
@@ -281,6 +293,10 @@ private actor IanuaChatAPI {
         try await self.decoder.decode(IanuaChannelPayload.self, from: self.call("/api/op/channels"))
     }
 
+    func chatLayout() async throws -> IanuaChatLayout {
+        try await self.decoder.decode(IanuaChatLayout.self, from: self.call("/api/op/chat/layout"))
+    }
+
     func snapshot(channel: String) async throws -> IanuaChatSnapshot {
         let value = channel.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? channel
         struct Phase: Decodable { let step: String? }
@@ -358,6 +374,7 @@ private actor IanuaChatAPI {
 
     @Published var phase: Phase = .loading
     @Published var payload: IanuaChannelPayload?
+    @Published var layout: IanuaChatLayout?
     @Published var error: String?
     @Published var busy = false
     @Published var memberships: [IanuaMembership]?
@@ -430,11 +447,17 @@ private actor IanuaChatAPI {
         let result = await self.reload()
         if result != .unauthorized { self.phase = .loggedIn }
         WADCallCenter.shared.refreshVoipTokenRegistration()
+        // Il QR consegna la sessione, e il SIP sta dietro la stessa sessione:
+        // registrarsi qui è ciò che rende l'onboarding completo. Senza questo
+        // il softphone resta muto finché l'utente non apre il tab Telefono.
+        // `start()` è già difensivo: senza interno assegnato esce da solo.
+        if result != .unauthorized { Task { await WADSipManager.shared.start() } }
     }
 
     func logout() async {
         await IanuaChatAPI.shared.logout()
         self.payload = nil
+        self.layout = nil
         self.phase = .loggedOut
     }
 
@@ -443,6 +466,12 @@ private actor IanuaChatAPI {
         do {
             self.payload = try await IanuaChatAPI.shared.channels()
             self.error = nil
+            // Arricchimento non bloccante: se /api/op/chat/layout fallisce o
+            // risponde male la chat resta un elenco piatto alfabetico, senza
+            // separatori e senza errore visibile. Un buco di rete non azzera il
+            // layout già ottenuto: i separatori non devono sparire a ogni
+            // refresh andato male.
+            if let layout = try? await IanuaChatAPI.shared.chatLayout() { self.layout = layout }
             return .success
         } catch {
             if case WADAPIError.unauthorized = error {
@@ -498,7 +527,7 @@ private struct IanuaLoginView: View {
                 .accessibilityLabel("Iànua")
             Text("Iànua Chat")
                 .font(.system(.largeTitle, design: .rounded).weight(.bold))
-            Text("Assistente, agenti e gruppi del tuo tenant")
+            Text("Assistente, agenti e canali del tuo tenant")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -604,7 +633,6 @@ private struct IanuaChannelListView: View {
     @EnvironmentObject private var model: IanuaChatModel
     @AppStorage("ianua.chat.collapsed.agents") private var agentsCollapsed = false
     @AppStorage("ianua.chat.collapsed.channels") private var channelsCollapsed = false
-    @AppStorage("ianua.chat.collapsed.groups") private var groupsCollapsed = false
 
     var body: some View {
         Group {
@@ -674,7 +702,8 @@ private struct IanuaChannelListView: View {
     }
 
     private func channelList(_ payload: IanuaChannelPayload) -> some View {
-        let channels = payload.agentChannels.filter { $0.archived != true }
+        let archivedIds = Set(self.model.layout?.archived ?? [])
+        let channels = payload.agentChannels.filter { $0.archived != true && !archivedIds.contains($0.id) }
         return List {
             Section("Assistente") {
                 self.row(payload.agent, icon: "sparkles")
@@ -686,19 +715,16 @@ private struct IanuaChannelListView: View {
             }
             if !channels.isEmpty {
                 self.collapsibleSection("Canali", collapsed: self.$channelsCollapsed, channels: channels) {
-                    ForEach(self.groupedChannels(channels)) { group in
-                        Text(group.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
-                            .accessibilityAddTraits(.isHeader)
+                    ForEach(self.layoutGroups(channels, separators: self.model.layout?.separators)) { group in
+                        if let title = group.title {
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                                .accessibilityAddTraits(.isHeader)
+                        }
                         ForEach(group.channels) { self.row($0, icon: "number") }
                     }
-                }
-            }
-            if !payload.groups.isEmpty {
-                self.collapsibleSection("Gruppi", collapsed: self.$groupsCollapsed, channels: payload.groups) {
-                    ForEach(payload.groups) { self.row($0, icon: "person.3.fill") }
                 }
             }
         }
@@ -707,46 +733,49 @@ private struct IanuaChannelListView: View {
     }
 
     private struct ChannelGroup: Identifiable {
-        let title: String
+        let id: String
+        /// `nil` per i canali non assegnati a nessun separatore: niente intestazione.
+        let title: String?
         let channels: [IanuaChannel]
-        var id: String {
-            self.title
-        }
     }
 
-    /// Stessi separatori predefiniti della chat web Iànua. I canali nuovi o
-    /// personalizzati restano visibili in "Altri", senza perdersi.
-    private func groupedChannels(_ channels: [IanuaChannel]) -> [ChannelGroup] {
-        let definitions: [(String, Set<String>)] = [
-            (
-                "Progetti",
-                ["sviluppo", "book-editor", "chautauqua", "efesto", "hermes", "bug", "siti", "repository"]),
-            (
-                "Azienda",
-                [
-                    "company-control",
-                    "finance-excel",
-                    "marketing",
-                    "todoist",
-                    "email",
-                    "legal",
-                    "email triage",
-                    "liste",
-                ]),
-            ("Personale", ["family-life", "universita", "investing", "calendar", "note"]),
-            ("Sistema", ["setup", "security-log", "mio pc"]),
-        ]
+    /// Ordinamento alfabetico case-insensitive e numeric-aware, come
+    /// `sortChannelsByName` sul web (public/operatore.html).
+    private func sortChannelsByName(_ channels: [IanuaChannel]) -> [IanuaChannel] {
+        channels.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Stesso ordine di resa del web (public/operatore.html, renderSide): prima
+    /// i canali non assegnati a nessun separatore, alfabetici e senza
+    /// intestazione; poi ogni separatore nell'ordine ricevuto dal server, con
+    /// intestazione e canali alfabetici risolti per id. `separators` nil o
+    /// vuoto = nessun separatore: il server è la sola fonte di verità, l'app
+    /// non reintroduce default propri.
+    private func layoutGroups(
+        _ channels: [IanuaChannel],
+        separators: [IanuaChatLayoutSeparator]?) -> [ChannelGroup]
+    {
+        // `uniquingKeysWith`, non `uniqueKeysWithValues`: un id duplicato nel
+        // payload farebbe crashare l'app, e i canali duplicati sono già
+        // accaduti in produzione (bug sanato lato web prima di a1c7118).
+        let byId = Dictionary(channels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var assigned = Set<String>()
-        var result: [ChannelGroup] = []
-        for (title, names) in definitions {
-            let members = channels.filter { names.contains($0.name.lowercased()) }
+        var groups: [ChannelGroup] = []
+
+        for separator in separators ?? [] {
+            assigned.formUnion(separator.channels)
+            let members = separator.channels.compactMap { byId[$0] }
             guard !members.isEmpty else { continue }
-            assigned.formUnion(members.map(\.id))
-            result.append(ChannelGroup(title: title, channels: members))
+            groups.append(ChannelGroup(id: separator.id, title: separator.name, channels: self.sortChannelsByName(members)))
         }
-        let other = channels.filter { !assigned.contains($0.id) }
-        if !other.isEmpty { result.append(ChannelGroup(title: "Altri", channels: other)) }
-        return result
+
+        let unassigned = channels.filter { !assigned.contains($0.id) }
+        if !unassigned.isEmpty {
+            groups.insert(
+                ChannelGroup(id: "__unassigned", title: nil, channels: self.sortChannelsByName(unassigned)),
+                at: 0)
+        }
+        return groups
     }
 
     /// Sezione con header tappabile: collassa/espande il gruppo e ricorda lo
