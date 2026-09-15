@@ -189,9 +189,11 @@ OPENCLAW_INTENTS_PROFILE =
 ${PUSH_XCCONFIG_BLOCK}
 EOF
 
-# Standard TestFlight builds intentionally omit the CarPlay entitlement until
-# Apple grants it to the Differen team. Local/dev builds keep using the source
-# entitlement file and can continue exercising the CarPlay implementation.
+# Apple granted carplay-communication to the Differen team on 2026-09-15, so
+# TestFlight builds now carry it: without the key in the signed entitlements the
+# CarPlay scene declared in project.yml never activates on a real head unit.
+# aps-environment stays production here — a TestFlight build signed development
+# registers sandbox APNs tokens, so pushes fail for anyone installing the app.
 write_generated_file "${BETA_ENTITLEMENTS}" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -199,6 +201,8 @@ write_generated_file "${BETA_ENTITLEMENTS}" <<'EOF'
 <dict>
   <key>aps-environment</key>
   <string>production</string>
+  <key>com.apple.developer.carplay-communication</key>
+  <true/>
 </dict>
 </plist>
 EOF
