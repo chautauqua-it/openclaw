@@ -4,6 +4,10 @@
 
 Maintenance update for the current Iànua development release.
 
+- Added CarPlay support: incoming and outgoing Iànua calls now appear on the car display, with the tenant directory and the Spock voice control.
+- Chat channel separators now follow the layout the server sends, so the phone shows the same sections as the web panel.
+- Removed the Groups section from chat, matching the web panel.
+- The activation QR now delivers the SIP configuration together with the session, so a freshly activated device is ready to make calls.
 - Added one-shot QR device activation: scan the activation code from any screen, in or out of the app, and Iànua opens the activation screen and waits for your confirmation before enabling anything (build 5).
 - Fixed chat bubble alignment: your own messages are now identified by operator role instead of user id, so they no longer appear on the wrong side of the conversation (build 5).
 - Completed the de-branding of the visible texts, including the system permission prompts (build 5).
