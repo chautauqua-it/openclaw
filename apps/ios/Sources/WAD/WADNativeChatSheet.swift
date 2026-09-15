@@ -766,7 +766,11 @@ private struct IanuaChannelListView: View {
             assigned.formUnion(separator.channels)
             let members = separator.channels.compactMap { byId[$0] }
             guard !members.isEmpty else { continue }
-            groups.append(ChannelGroup(id: separator.id, title: separator.name, channels: self.sortChannelsByName(members)))
+            groups.append(
+                ChannelGroup(
+                    id: separator.id,
+                    title: separator.name,
+                    channels: self.sortChannelsByName(members)))
         }
 
         let unassigned = channels.filter { !assigned.contains($0.id) }
