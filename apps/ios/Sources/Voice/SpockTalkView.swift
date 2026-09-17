@@ -33,7 +33,6 @@ struct SpockTalkView: View {
         }
         .preferredColorScheme(.dark)
         .onAppear {
-            self.manager.prewarmConnection()
             self.appModel.beginSpockTalkCapture()
             self.manager.start()
         }

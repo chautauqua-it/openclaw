@@ -160,7 +160,14 @@ struct RootCanvas: View {
             guard newValue else { return }
             self.dismissConflictsForAuthenticator()
         }
-        .onAppear { self.presentPendingProvisioningIfNeeded() }
+        .onAppear {
+            self.presentPendingProvisioningIfNeeded()
+            // Il prewarm va qui e non in SpockTalkView: quella vista scalda e
+            // avvia la connessione nello stesso onAppear, quindi non anticipa
+            // nulla. Da qui l'handshake verso il talk daemon è già chiuso
+            // quando l'utente tocca il microfono.
+            SpockTalkManager.shared.prewarmConnection()
+        }
         .onChange(of: self.provisioningInbox.pending) { _, pending in
             guard pending != nil else { return }
             self.presentPendingProvisioningIfNeeded()
