@@ -1,5 +1,6 @@
 import Foundation
 import PhotosUI
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
@@ -1402,6 +1403,10 @@ private struct IanuaMessageBubbleView: View {
     let message: IanuaMessage
     let isMine: Bool
 
+    @State private var previewURL: URL?
+    @State private var downloadingAttachmentID: String?
+    @State private var failedAttachmentID: String?
+
     var body: some View {
         HStack {
             if self.isMine { Spacer(minLength: 40) }
@@ -1460,6 +1465,7 @@ private struct IanuaMessageBubbleView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             if !self.isMine { Spacer(minLength: 40) }
         }
+        .quickLookPreview(self.$previewURL)
     }
 
     private var bubbleColor: Color {
@@ -1501,9 +1507,17 @@ private struct IanuaMessageBubbleView: View {
     }
 
     private func attachmentChip(_ attachment: IanuaAttachment, url: URL) -> some View {
-        Link(destination: url) {
+        Button {
+            self.openAttachment(attachment, url: url)
+        } label: {
             HStack(spacing: 6) {
-                Image(systemName: "paperclip")
+                if self.downloadingAttachmentID == attachment.id {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: self.failedAttachmentID == attachment.id
+                        ? "exclamationmark.circle"
+                        : "paperclip")
+                }
                 Text(attachment.name).lineLimit(1)
             }
             .font(.caption)
@@ -1512,7 +1526,49 @@ private struct IanuaMessageBubbleView: View {
             .background(.quaternary)
             .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Apri allegato \(attachment.name)")
     }
+
+    /// Safari è un processo a parte e non vede il cookie `ianua_session`
+    /// dell'app: aprire l'URL dell'allegato con `Link` finiva sempre su un 401.
+    /// Il file si scarica qui, con la sessione autenticata, e si mostra con
+    /// QuickLook — che gestisce pdf, office, testo e video senza uscire da Iànua.
+    private func openAttachment(_ attachment: IanuaAttachment, url: URL) {
+        guard self.downloadingAttachmentID == nil else { return }
+        self.downloadingAttachmentID = attachment.id
+        self.failedAttachmentID = nil
+        Task { @MainActor in
+            do {
+                self.previewURL = try await ianuaDownloadAttachment(url: url, name: attachment.name)
+            } catch {
+                self.failedAttachmentID = attachment.id
+            }
+            self.downloadingAttachmentID = nil
+        }
+    }
+}
+
+/// Scarica un allegato di chat in un file temporaneo leggibile da QuickLook.
+/// `URLSession.shared` porta con sé il cookie di sessione Iànua.
+private func ianuaDownloadAttachment(url: URL, name: String) async throws -> URL {
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 60
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse else { throw WADAPIError.unreachable }
+    guard (200...299).contains(http.statusCode) else {
+        if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
+            throw WADAPIError.unauthorized
+        }
+        throw WADAPIError.server("Errore allegato \(http.statusCode)")
+    }
+    // L'estensione deve sopravvivere: QuickLook sceglie il visualizzatore da lì.
+    let safe = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ianua-allegati", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let file = dir.appendingPathComponent(safe.isEmpty ? "allegato" : safe)
+    try data.write(to: file, options: .atomic)
+    return file
 }
 
 /// Corpo del messaggio come `UITextView` non editabile: a differenza di
