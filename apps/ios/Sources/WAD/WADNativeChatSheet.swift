@@ -1433,9 +1433,7 @@ private struct IanuaMessageBubbleView: View {
                     }
                 }
                 if !self.message.bodyWithoutSecret.isEmpty {
-                    Text(self.message.bodyWithoutSecret)
-                        .font(.body)
-                        .textSelection(.enabled)
+                    WADSelectableMessageText(text: self.message.bodyWithoutSecret)
                 }
                 if let secret = message.secret {
                     IanuaSecretCardView(secret: secret)
@@ -1514,6 +1512,43 @@ private struct IanuaMessageBubbleView: View {
             .background(.quaternary)
             .clipShape(Capsule())
         }
+    }
+}
+
+/// Corpo del messaggio come `UITextView` non editabile: a differenza di
+/// `Text(...).textSelection(.enabled)`, la selezione libera del testo resta
+/// utilizzabile anche dentro una bolla che porta anche `.contextMenu(...)`,
+/// perché la gestione del long-press di `UITextView` non viene intercettata
+/// dal riconoscitore di gesture del context menu SwiftUI.
+private struct WADSelectableMessageText: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.textColor = .label
+        view.text = self.text
+        view.setContentHuggingPriority(.required, for: .vertical)
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        return view
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        if uiView.text != self.text {
+            uiView.text = self.text
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 320
+        return uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
     }
 }
 
