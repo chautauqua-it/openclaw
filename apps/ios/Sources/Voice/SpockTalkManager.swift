@@ -157,32 +157,49 @@ final class SpockTalkManager {
         var error: String?
     }
 
+    private struct MintHTTPError: Error {
+        let message: String
+        let requiresLogin: Bool
+    }
+
+    private var lastPrewarmAt: Date?
+    private static let prewarmCooldown: TimeInterval = 30
+
+    /// Riscalda DNS/TLS verso `serverBaseURL` quando la vista voce compare,
+    /// prima che l'utente tocchi avvia, così il mint successivo non paga
+    /// l'handshake a freddo. Best-effort e silenzioso: nessun errore va
+    /// mostrato e `phase` non va mai toccata da qui.
+    func prewarmConnection() {
+        if let lastPrewarmAt, Date().timeIntervalSince(lastPrewarmAt) < Self.prewarmCooldown { return }
+        self.lastPrewarmAt = Date()
+        var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("health"))
+        request.timeoutInterval = 5
+        URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
+    }
+
     private func connect() async {
         let connectStartedAt = Date()
         IanuaSessionStore.restoreIfNeeded()
-        let granted = await Self.requestMicPermission()
+
+        async let permissionGranted = Self.requestMicPermission()
+        async let mintResult = self.requestMint()
+
+        let granted = await permissionGranted
+        WADDeviceLog.shared.log(
+            "talk.perf",
+            String(format: "permesso microfono in %.2fs", Date().timeIntervalSince(connectStartedAt)))
         guard granted else {
             self.fail("Permesso microfono negato: abilitalo in Impostazioni.")
             return
         }
+
         let mint: MintResponse
         do {
-            var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("session"))
-            request.httpMethod = "POST"
-            request.timeoutInterval = 12
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                self.fail("Risposta Iànua Realtime non valida.")
-                return
-            }
-            if let message = IanuaRealtimeHTTPPolicy.errorMessage(statusCode: http.statusCode, data: data) {
-                if IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode) {
-                    IanuaSessionStore.clear()
-                }
-                self.fail(message)
-                return
-            }
-            mint = try JSONDecoder().decode(MintResponse.self, from: data)
+            mint = try await mintResult
+        } catch let error as MintHTTPError {
+            if error.requiresLogin { IanuaSessionStore.clear() }
+            self.fail(error.message)
+            return
         } catch {
             self.fail("Servizio Iànua Realtime non raggiungibile: \(error.localizedDescription)")
             return
@@ -226,6 +243,22 @@ final class SpockTalkManager {
         default:
             await AVAudioApplication.requestRecordPermission()
         }
+    }
+
+    private func requestMint() async throws -> MintResponse {
+        var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("session"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 12
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MintHTTPError(message: "Risposta Iànua Realtime non valida.", requiresLogin: false)
+        }
+        if let message = IanuaRealtimeHTTPPolicy.errorMessage(statusCode: http.statusCode, data: data) {
+            throw MintHTTPError(
+                message: message,
+                requiresLogin: IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode))
+        }
+        return try JSONDecoder().decode(MintResponse.self, from: data)
     }
 
     // MARK: - Audio
