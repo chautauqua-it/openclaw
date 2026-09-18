@@ -74,6 +74,35 @@ private func encodeSetupCode(_ payload: String) -> String {
                 password: nil))
     }
 
+    @Test func setupCodeAllowsPrivateLanWs() {
+        // gateway.bind=lan (src/shared/gateway-bind-url.ts) mints exactly this shape: the
+        // server's own mobile-pairing gate (isMobilePairingCleartextAllowedHost) already
+        // allows RFC1918 LAN hosts over cleartext ws, so the client must accept it too.
+        let payload = #"{"url":"ws://192.168.1.42:18789","bootstrapToken":"tok"}"#
+        #expect(
+            GatewayConnectDeepLink.fromSetupCode(encodeSetupCode(payload)) == .init(
+                host: "192.168.1.42",
+                port: 18789,
+                tls: false,
+                bootstrapToken: "tok",
+                token: nil,
+                password: nil))
+    }
+
+    @Test func gatewayDeepLinkAllowsPrivateLanWs() {
+        let url = URL(
+            string: "openclaw://gateway?host=192.168.1.42&port=18789&tls=0&token=abc")!
+        #expect(
+            DeepLinkParser.parse(url) == .gateway(
+                .init(
+                    host: "192.168.1.42",
+                    port: 18789,
+                    tls: false,
+                    bootstrapToken: nil,
+                    token: "abc",
+                    password: nil)))
+    }
+
     @Test func setupCodeKeepsSecretRoutePath() {
         let payload = #"{"url":"wss://ianua.differen.it/gw-secret/","bootstrapToken":"tok"}"#
         let link = GatewayConnectDeepLink.fromSetupCode(encodeSetupCode(payload))

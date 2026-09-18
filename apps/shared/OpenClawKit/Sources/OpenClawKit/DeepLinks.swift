@@ -73,7 +73,11 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
         let scheme = (parsed.scheme ?? "ws").lowercased()
         guard scheme == "ws" || scheme == "wss" else { return nil }
         let tls = scheme == "wss"
-        if !tls, !LoopbackHost.isLoopbackHost(hostname) {
+        // Mirrors the server's own gate for what it will mint into a setup code
+        // (src/pairing/setup-code.ts: isMobilePairingCleartextAllowedHost), which allows
+        // cleartext ws for the whole private LAN when `gateway.bind=lan`, not just loopback.
+        // Restricting this to isLoopbackHost() silently rejected every LAN-bound pairing QR.
+        if !tls, !LoopbackHost.isLocalNetworkHost(hostname) {
             return nil
         }
         let normalizedPath = self.normalizePath(parsed.path)
@@ -178,7 +182,8 @@ public enum DeepLinkParser {
             }
             let port = query["port"].flatMap { Int($0) } ?? 18789
             let tls = (query["tls"] as NSString?)?.boolValue ?? false
-            if !tls, !LoopbackHost.isLoopbackHost(hostParam) {
+            // Same LAN allowance as GatewayConnectDeepLink.fromSetupCode above.
+            if !tls, !LoopbackHost.isLocalNetworkHost(hostParam) {
                 return nil
             }
             let normalizedPath = GatewayConnectDeepLink.normalizePath(query["path"])

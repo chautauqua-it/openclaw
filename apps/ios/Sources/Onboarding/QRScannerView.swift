@@ -81,6 +81,12 @@ struct QRScannerView: UIViewControllerRepresentable {
                     self.parent.onGatewayLink(link)
                     return
                 }
+
+                // A barcode decoded fine but isn't a recognized pairing code: tell the
+                // person instead of leaving the scanner looking stuck. Matches the
+                // photo-picker fallback below, which already reports this case.
+                self.reportError(
+                    "This QR code isn't a valid pairing code. It may be expired, or this app version may not support it.")
             }
         }
 
