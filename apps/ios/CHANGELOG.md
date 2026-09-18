@@ -4,6 +4,11 @@
 
 Maintenance update for the current Iànua development release.
 
+- Fixed device activation: pairing QR codes issued for a gateway on the local network are accepted again, instead of being rejected without any message (build 7).
+- Manual connection now follows the same local-network rule as the QR code, so a host that pairs by scan is no longer refused when typed by hand (build 7).
+- The QR scanner now explains when a scanned code is not a valid or current activation code, instead of appearing to hang (build 7).
+- Chat message text can now be selected and copied freely, including partial selections (build 7).
+- Chat attachments now open inside the app instead of being handed to Safari, where the session was lost (build 7).
 - Added CarPlay support: incoming and outgoing Iànua calls now appear on the car display, with the tenant directory and the Spock voice control.
 - Chat channel separators now follow the layout the server sends, so the phone shows the same sections as the web panel.
 - Removed the Groups section from chat, matching the web panel.
