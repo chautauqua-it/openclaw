@@ -134,3 +134,15 @@ Comando: `IOS_BETA_BUILD_NUMBER=8 LC_ALL/LANG=en_US.UTF-8 fastlane beta` da `app
 (build + upload TestFlight, `skip_waiting_for_build_processing:true`).
 **Se questo run muore qui: NON rifare la build alla cieca — controlla prima con `fastlane beta_status`
 se la build 8 risulta gia' caricata su App Store Connect.**
+
+### Blocco 1 risolto — release notes "stale" (18:02)
+
+`fastlane beta` si e' fermato PRIMA di compilare, su `sync_ios_versioning!`:
+`iOS release notes is stale: apps/ios/fastlane/metadata/en-US/release_notes.txt`.
+Causa: `release_notes.txt` e' **generato** da `apps/ios/CHANGELOG.md`
+(`scripts/lib/ios-version.ts`, `IOS_CHANGELOG_FILE` -> `IOS_RELEASE_NOTES_FILE`). Dev01 (commit `6825d743e`)
+ha scritto a mano le note della build 8 senza portarle nel CHANGELOG sorgente (il pattern corretto e' il
+commit `c10f785de`). Correzione: le **stesse identiche due righe** build 8 di Dev01 copiate in testa alla
+sezione `## 2026.4.27` del CHANGELOG. Verificato: `ios-sync-versioning.ts` risponde "already up to date" e
+`release_notes.txt` resta **byte-identico** (nessuna riscrittura delle note). `--check` ora esce 0.
+Nessuna logica applicativa toccata.

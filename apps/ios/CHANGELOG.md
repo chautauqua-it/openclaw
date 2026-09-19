@@ -4,6 +4,8 @@
 
 Maintenance update for the current Iànua development release.
 
+- Fixed profile activation QR: the code shown on your Iànua profile page is now recognized during first-launch setup, instead of being rejected with a generic "not a valid pairing code" message (build 8).
+- Every activation QR rejection now shows a specific reason (expired, already used, revoked, device key not trusted, or too many attempts), instead of one generic error (build 8).
 - Fixed device activation: pairing QR codes issued for a gateway on the local network are accepted again, instead of being rejected without any message (build 7).
 - Manual connection now follows the same local-network rule as the QR code, so a host that pairs by scan is no longer refused when typed by hand (build 7).
 - The QR scanner now explains when a scanned code is not a valid or current activation code, instead of appearing to hang (build 7).
