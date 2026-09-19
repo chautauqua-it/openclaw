@@ -172,6 +172,9 @@ struct OnboardingWizardView: View {
                         onGatewayLink: { link in
                             self.handleScannedLink(link)
                         },
+                        onProvisionLink: { link in
+                            self.handleProvisionLink(link)
+                        },
                         onError: { error in
                             self.showQRScanner = false
                             self.statusLine = "Scanner error: \(error)"
@@ -204,16 +207,15 @@ struct OnboardingWizardView: View {
                             return
                         }
                         if let message = self.detectQRCode(from: data) {
-                            if let link = GatewayConnectDeepLink.fromSetupCode(message) {
+                            switch WizardQRRecognizer.recognize(message) {
+                            case let .gateway(link):
                                 self.handleScannedLink(link)
                                 return
-                            }
-                            if let url = URL(string: message),
-                               let route = DeepLinkParser.parse(url),
-                               case let .gateway(link) = route
-                            {
-                                self.handleScannedLink(link)
+                            case let .provision(link):
+                                self.handleProvisionLink(link)
                                 return
+                            case nil:
+                                break
                             }
                         }
                         self.showQRScanner = false
@@ -779,6 +781,47 @@ struct OnboardingWizardView: View {
             self.selectedMode = link.tls ? .remoteDomain : .homeNetwork
         }
         Task { await self.connectManual() }
+    }
+
+    /// A QR from the person's Iànua profile page (`ianua://provision?...`), not a
+    /// Mac `/pair` setup code. Claiming it authenticates the person's Iànua account;
+    /// if the claim also carries gateway connection details, we chain straight into
+    /// `handleScannedLink` so one QR does both in a single scan. Every outcome — success
+    /// with a gateway, success without one, and every failure — gets its own message:
+    /// this path used to fall through to a generic "not a valid pairing code" error.
+    private func handleProvisionLink(_ link: IanuaProvisionLink) {
+        self.showQRScanner = false
+        self.connectMessage = "Activating with your profile QR…"
+        self.statusLine = "Activating with your profile QR…"
+        Task { await self.claimProvisionLink(link) }
+    }
+
+    private func claimProvisionLink(_ link: IanuaProvisionLink) async {
+        do {
+            let claim = try await IanuaProvisioningClient.shared.claim(link)
+            guard let gatewayLink = claim.gateway?.connectDeepLink else {
+                let message =
+                    "Signed in as \(claim.user.nome) (\(claim.tenant.nome)), but this QR doesn't include gateway "
+                        + "credentials yet. Ask the operator for a Mac \"/pair qr\" code, or update the server so "
+                        + "profile QRs carry gateway details too."
+                self.connectMessage = nil
+                self.statusLine = message
+                self.scannerError = message
+                return
+            }
+            self.statusLine = "Signed in as \(claim.user.nome) (\(claim.tenant.nome)). Connecting to the gateway…"
+            self.handleScannedLink(gatewayLink)
+        } catch let error as IanuaProvisionError {
+            let message = error.errorDescription ?? "Activation failed."
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+        } catch {
+            let message = "Activation failed: \(error.localizedDescription)"
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+        }
     }
 
     private func openQRScannerFromOnboarding() {

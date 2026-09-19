@@ -169,4 +169,36 @@ private func encodeSetupCode(_ payload: String) -> String {
         #expect(GatewayConnectDeepLink.normalizePath("/gw/../admin") == .invalid)
         #expect(GatewayConnectDeepLink.normalizePath("..") == .invalid)
     }
+
+    // MARK: - fromProvisionClaim (plain-JSON gateway fields from /api/provision/claim)
+
+    @Test func provisionClaimBuildsTheSameLinkAsAnEquivalentSetupCode() {
+        let setupCode = encodeSetupCode(
+            #"{"url":"ws://192.168.1.20:18789","token":"abc","password":"pw"}"#)
+        let fromSetupCode = GatewayConnectDeepLink.fromSetupCode(setupCode)
+        let fromClaim = GatewayConnectDeepLink.fromProvisionClaim(
+            url: "ws://192.168.1.20:18789", bootstrapToken: nil, token: "abc", password: "pw")
+        #expect(fromClaim != nil)
+        #expect(fromClaim == fromSetupCode)
+    }
+
+    @Test func provisionClaimRejectsInsecureNonLoopbackWs() {
+        #expect(
+            GatewayConnectDeepLink.fromProvisionClaim(
+                url: "ws://attacker.example:18789", bootstrapToken: nil, token: "abc", password: nil) == nil)
+    }
+
+    @Test func provisionClaimAllowsPrivateLanWs() {
+        let link = GatewayConnectDeepLink.fromProvisionClaim(
+            url: "ws://192.168.1.20:18789", bootstrapToken: "boot", token: nil, password: nil)
+        #expect(link?.host == "192.168.1.20")
+        #expect(link?.tls == false)
+        #expect(link?.bootstrapToken == "boot")
+    }
+
+    @Test func provisionClaimRejectsTraversalPath() {
+        #expect(
+            GatewayConnectDeepLink.fromProvisionClaim(
+                url: "wss://gateway.example/gw/../admin", bootstrapToken: nil, token: nil, password: nil) == nil)
+    }
 }

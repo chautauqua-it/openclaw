@@ -38,14 +38,31 @@ Procedo comunque con: (1) fix app-side del routing e dei messaggi d'errore, (2) 
 
 ## PROSSIMI PASSI (in ordine)
 
-1. [FATTO sopra] Diagnosi provata.
-2. Scrivere test che fallisce PRIMA del fix: payload reale ricostruito (`ianua://provision?s=rstrt&t=ibs_<43char>`) passato al percorso di riconoscimento del wizard → oggi nessuno dei parser lo accetta.
-3. Fix app: in `QRScannerView.swift` e nel percorso Foto di `OnboardingWizardView.swift`, aggiungere tentativo `IanuaProvisionLink.parse` dopo i due esistenti, con branch dedicato nel wizard che chiama `IanuaProvisioningClient.shared.claim(link)` e mostra messaggi distinti per ogni esito (successo con gateway, successo senza gateway = "serve aggiornamento server", ogni `IanuaProvisionError`).
-4. Estendere `Claim.Gateway` con campi opzionali di connessione + costruzione di `GatewayConnectDeepLink` quando presenti.
-5. Test di regressione: `swift test` sul pacchetto condiviso + target iOS su simulatore. Riportare pass/fail.
-6. Scrivere spec del contratto server (documento, non codice — il file server non è in questo repo).
-7. Build 8 unica + upload TestFlight, solo a step 5 verde.
+1. [FATTO] Diagnosi provata.
+2. [FATTO] Test scritti (vedi sotto), verdi dopo il fix.
+3. [FATTO] Fix app applicato (vedi FILE TOCCATI).
+4. [FATTO] `Claim.Gateway` esteso con campi opzionali di connessione + `connectDeepLink`.
+5. [FATTO — vedi RISULTATI TEST] `swift test` sul pacchetto condiviso + target iOS su simulatore.
+6. [DA FARE] Scrivere spec del contratto server (documento, non codice — il file server non è in questo repo, vedi BLOCCANTE sopra).
+7. [DA FARE] Build 8 unica + upload TestFlight, solo a step 5 verde (verde ora — procedo).
+
+## FIX APPLICATO (app-side)
+
+- **`apps/ios/Sources/Onboarding/WizardQRRecognizer.swift` (nuovo)**: unico punto che prova, in ordine, `GatewayConnectDeepLink.fromSetupCode` → `DeepLinkParser.parse` (`.gateway`) → `IanuaProvisionLink.parse`. Prima del fix il terzo tentativo non esisteva in nessuno dei due punti di ingresso del wizard.
+- **`apps/ios/Sources/Onboarding/QRScannerView.swift`**: `Coordinator.dataScanner(didAdd:)` (riga ~69, ora ~69-84) usa `WizardQRRecognizer.recognize` invece della coppia di controlli inline; nuovo `onProvisionLink` closure sul componente.
+- **`apps/ios/Sources/Onboarding/OnboardingWizardView.swift`**:
+  - riga ~172-179: il `QRScannerView(...)` passa anche `onProvisionLink: { link in self.handleProvisionLink(link) }`.
+  - riga ~206-220 (percorso "scegli da Foto"): usa `WizardQRRecognizer.recognize` invece della coppia di controlli inline.
+  - nuove funzioni `handleProvisionLink(_:)` / `claimProvisionLink(_:)` (dopo `handleScannedLink`, ~riga 784): chiamano `IanuaProvisioningClient.shared.claim(link)`; se la claim porta anche le credenziali gateway (`claim.gateway?.connectDeepLink`), incatenano `handleScannedLink` così un solo QR fa login **e** collega il nodo; se la claim va a buon fine ma senza credenziali gateway (server attuale), mostra messaggio esplicito che lo dice; ogni `IanuaProvisionError` mostra il proprio `errorDescription` (già distinti per caso). Nessun ramo cade più nel messaggio generico "not a valid pairing code".
+- **`apps/ios/Sources/Provisioning/IanuaProvisioningClient.swift`**: `Claim.Gateway` ha ora `url/bootstrapToken/token/password: String?` opzionali (retro-compatibili: un server che manda solo `status` decodifica lo stesso, `connectDeepLink` è `nil`) + `var connectDeepLink: GatewayConnectDeepLink?`.
+- **`apps/shared/OpenClawKit/Sources/OpenClawKit/DeepLinks.swift`**: `fromSetupCode` ora delega a un helper privato `build(urlString:bootstrapToken:token:password:)` condiviso con la nuova `GatewayConnectDeepLink.fromProvisionClaim(url:bootstrapToken:token:password:)` (stessa validazione host/LAN/path di `fromSetupCode`, ma da campi JSON semplici invece che base64url — è la forma che una futura risposta di `/api/provision/claim` userebbe).
+
+## RISULTATI TEST (dopo il fix)
+
+- `swift test` in `apps/shared/OpenClawKit`: **134/134 passati** (inclusi 4 nuovi test `provisionClaim*` in `DeepLinksSecurityTests.swift`).
+- `xcodebuild test` su simulatore "Iànua Test iPhone 17 Pro" (scheme `OpenClaw`, solo i nuovi target): **8/8 passati** (`WizardQRRecognizerTests` × 5, `IanuaProvisioningClaimDecodingTests` × 3). Suite completa `OpenClawTests`/`OpenClawLogicTests` da eseguire prima della build finale (prossimo step).
 
 ## FILE TOCCATI FINORA
 
-Nessuno ancora (solo lettura/diagnosi). Da toccare: `apps/ios/Sources/Onboarding/QRScannerView.swift`, `apps/ios/Sources/Onboarding/OnboardingWizardView.swift`, `apps/ios/Sources/Provisioning/IanuaProvisioningClient.swift`, nuovo test in `apps/ios/Tests/`.
+Modificati: `apps/ios/Sources/Onboarding/QRScannerView.swift`, `apps/ios/Sources/Onboarding/OnboardingWizardView.swift`, `apps/ios/Sources/Provisioning/IanuaProvisioningClient.swift`, `apps/shared/OpenClawKit/Sources/OpenClawKit/DeepLinks.swift`, `apps/shared/OpenClawKit/Tests/OpenClawKitTests/DeepLinksSecurityTests.swift`.
+Nuovi: `apps/ios/Sources/Onboarding/WizardQRRecognizer.swift`, `apps/ios/Tests/WizardQRRecognizerTests.swift`, `apps/ios/Tests/IanuaProvisioningClaimDecodingTests.swift`.

@@ -4,6 +4,7 @@ import VisionKit
 
 struct QRScannerView: UIViewControllerRepresentable {
     let onGatewayLink: (GatewayConnectDeepLink) -> Void
+    let onProvisionLink: (IanuaProvisionLink) -> Void
     let onError: (String) -> Void
     let onDismiss: () -> Void
 
@@ -65,28 +66,22 @@ struct QRScannerView: UIViewControllerRepresentable {
                       let payload = barcode.payloadStringValue
                 else { continue }
 
-                // Try setup code format first (base64url JSON from /pair qr).
-                if let link = GatewayConnectDeepLink.fromSetupCode(payload) {
+                switch WizardQRRecognizer.recognize(payload) {
+                case let .gateway(link):
                     self.handled = true
                     self.parent.onGatewayLink(link)
                     return
-                }
-
-                // Fall back to deep link URL format (openclaw://gateway?...).
-                if let url = URL(string: payload),
-                   let route = DeepLinkParser.parse(url),
-                   case let .gateway(link) = route
-                {
+                case let .provision(link):
                     self.handled = true
-                    self.parent.onGatewayLink(link)
+                    self.parent.onProvisionLink(link)
                     return
+                case nil:
+                    // A barcode decoded fine but isn't a recognized pairing code: tell the
+                    // person instead of leaving the scanner looking stuck. Matches the
+                    // photo-picker fallback below, which already reports this case.
+                    self.reportError(
+                        "This QR code isn't a valid pairing code. It may be expired, or this app version may not support it.")
                 }
-
-                // A barcode decoded fine but isn't a recognized pairing code: tell the
-                // person instead of leaving the scanner looking stuck. Matches the
-                // photo-picker fallback below, which already reports this case.
-                self.reportError(
-                    "This QR code isn't a valid pairing code. It may be expired, or this app version may not support it.")
             }
         }
 

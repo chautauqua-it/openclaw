@@ -74,14 +74,30 @@ actor IanuaProvisioningClient {
 
         struct Gateway: Decodable, Equatable {
             let status: String
+            /// Campi di connessione del gateway, quando il server li allega alla
+            /// claim (stessa forma di un setup code `/pair`, ma passati come JSON
+            /// semplice invece che base64url). Opzionali per compatibilità con un
+            /// server che manda solo `status`: finché non li spedisce, il device
+            /// si attiva per la chat ma il nodo non si collega da solo.
+            let url: String?
+            let bootstrapToken: String?
+            let token: String?
+            let password: String?
+
+            var connectDeepLink: GatewayConnectDeepLink? {
+                guard let url else { return nil }
+                return GatewayConnectDeepLink.fromProvisionClaim(
+                    url: url, bootstrapToken: self.bootstrapToken, token: self.token, password: self.password)
+            }
         }
 
         let tenant: Tenant
         let user: User
         let device: Device
-        /// Stato del setup code del gateway. Lo decodifichiamo per non perderne
-        /// traccia, ma questa schermata non lo applica: collegare il nodo al
-        /// gateway è un passo suo, con la sua UI e il suo errore.
+        /// Stato del setup code del gateway, più i campi di connessione quando il
+        /// server li allega (vedi `Gateway.connectDeepLink`). Finché il server manda
+        /// solo `status`, `connectDeepLink` è nil e il chiamante lo tratta come "QR
+        /// valido ma senza gateway", non come un errore.
         let gateway: Gateway?
     }
 

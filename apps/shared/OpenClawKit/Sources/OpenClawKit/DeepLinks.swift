@@ -65,8 +65,35 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
     public static func fromSetupCode(_ code: String) -> GatewayConnectDeepLink? {
         guard let data = decodeBase64Url(code) else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        guard let urlString = json["url"] as? String,
-              let parsed = URLComponents(string: urlString),
+        guard let urlString = json["url"] as? String else { return nil }
+        return self.build(
+            urlString: urlString,
+            bootstrapToken: json["bootstrapToken"] as? String,
+            token: json["token"] as? String,
+            password: json["password"] as? String)
+    }
+
+    /// Same shape as a setup code, but for a gateway connection handed over plainly
+    /// (e.g. as JSON fields in an `/api/provision/claim` response) rather than
+    /// base64url-encoded. Used by the account-activation QR flow, which authenticates
+    /// via a different channel than the `/pair` setup code but must connect to the
+    /// gateway under the exact same host/scheme rules.
+    public static func fromProvisionClaim(
+        url urlString: String,
+        bootstrapToken: String?,
+        token: String?,
+        password: String?) -> GatewayConnectDeepLink?
+    {
+        self.build(urlString: urlString, bootstrapToken: bootstrapToken, token: token, password: password)
+    }
+
+    private static func build(
+        urlString: String,
+        bootstrapToken: String?,
+        token: String?,
+        password: String?) -> GatewayConnectDeepLink?
+    {
+        guard let parsed = URLComponents(string: urlString),
               let hostname = parsed.host, !hostname.isEmpty
         else { return nil }
 
@@ -83,9 +110,6 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
         let normalizedPath = self.normalizePath(parsed.path)
         guard normalizedPath != .invalid else { return nil }
         let port = parsed.port ?? (tls ? 443 : 18789)
-        let bootstrapToken = json["bootstrapToken"] as? String
-        let token = json["token"] as? String
-        let password = json["password"] as? String
         return GatewayConnectDeepLink(
             host: hostname,
             port: port,
