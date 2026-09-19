@@ -159,3 +159,14 @@ Nessuna logica applicativa toccata.
 **NON RICARICARE: la build 8 (2026.4.27) e' gia' su App Store Connect.** Un eventuale successore che riprende
 questo ticket deve solo verificarne lo stato di processing con `fastlane beta_status`, non rifare la build.
 Log completo del run: /tmp/b8_beta2.log
+
+### Esito App Store Connect — VERIFICATO (18:09:56)
+
+`fastlane beta_status`:
+`build 2026.4.27 (8) uploaded=2026-09-19T09:07:20-07:00 processing=VALID internal=IN_BETA_TESTING
+external=READY_FOR_BETA_SUBMISSION expired=false`
+Processing completato in ~2 minuti. **Gia' installabile dal gruppo di test interno.** Step 7 CHIUSO.
+
+Nota per il successore: il branch `devpool/20260918222515-qrpair/dev01` NON e' stato pushato (nessuna
+autorizzazione richiesta ne' concessa). La build 8 e' stata prodotta dal commit locale `3159892e2`
+(che contiene il fix `19458af04`).
