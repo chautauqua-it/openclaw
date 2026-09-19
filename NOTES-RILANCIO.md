@@ -146,3 +146,16 @@ commit `c10f785de`). Correzione: le **stesse identiche due righe** build 8 di De
 sezione `## 2026.4.27` del CHANGELOG. Verificato: `ios-sync-versioning.ts` risponde "already up to date" e
 `release_notes.txt` resta **byte-identico** (nessuna riscrittura delle note). `--check` ora esce 0.
 Nessuna logica applicativa toccata.
+
+### BUILD 8 CARICATA SU TESTFLIGHT — FATTO (19/09, 18:03-18:09 Europe/Rome)
+
+`fastlane beta` exit 0. Sequenza verificata dal log:
+
+- 18:03:18 `Using explicit iOS beta build number 8` / `Prepared iOS beta release: version=2026.4.27 build=8 team=L4KB53SM5T`
+- 18:05:03 ipa esportato e firmato; `Archive Info.plist verified: NSFaceIDUsageDescription, NSMicrophoneUsageDescription present`
+- 18:06:24 `Successfully uploaded the new binary to App Store Connect` (App 6809777645)
+- 18:09:29 `Uploaded iOS beta: version=2026.4.27 build=8`
+
+**NON RICARICARE: la build 8 (2026.4.27) e' gia' su App Store Connect.** Un eventuale successore che riprende
+questo ticket deve solo verificarne lo stato di processing con `fastlane beta_status`, non rifare la build.
+Log completo del run: /tmp/b8_beta2.log
