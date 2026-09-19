@@ -108,3 +108,29 @@ da ASC (`resolve_beta_build_number`, `Fastfile:167-182`), non serve incrementarl
 Modificati: `apps/ios/Sources/Onboarding/QRScannerView.swift`, `apps/ios/Sources/Onboarding/OnboardingWizardView.swift`, `apps/ios/Sources/Provisioning/IanuaProvisioningClient.swift`, `apps/ios/Tests/IanuaProvisioningClaimDecodingTests.swift`, `apps/shared/OpenClawKit/Sources/OpenClawKit/DeepLinks.swift`, `apps/shared/OpenClawKit/Tests/OpenClawKitTests/DeepLinksSecurityTests.swift`.
 Nuovi: `apps/ios/Sources/Onboarding/WizardQRRecognizer.swift`, `apps/ios/Tests/WizardQRRecognizerTests.swift`.
 Rimossi: `SERVER-SPEC-provision-claim.md` (contratto server mai reale, vedi CORREZIONE DEL COORDINATORE).
+
+## RUN BUILD 8 — Aletov (2026-09-19)
+
+Worker di rilascio (Aletov) preso in carico lo step 7 lasciato BLOCCATO da Dev01.
+
+### Pre-volo (18:01 Europe/Rome) — FATTO
+
+- Worktree verificato: branch `devpool/20260918222515-qrpair/dev01`, HEAD `19458af04`, albero pulito.
+- `apps/ios/fastlane/.env` NON esisteva nel worktree (git-ignored, `.gitignore:79`): copiato dal repo principale
+  `/Users/polpo/claw/core/openclaw/apps/ios/fastlane/.env`. Contiene ASC_KEY_ID/ASC_ISSUER_ID/ASC_KEY_PATH
+  (`AuthKey_3NW44WU62R.p8`), `IOS_DEVELOPMENT_TEAM=L4KB53SM5T`, `IOS_BETA_APP_IDENTIFIER=it.differen.ianua`,
+  `IOS_SIGNING_USE_XCODE_ACCOUNT=0`. Resta git-ignored: `git status` pulito.
+- `LocalSigning.xcconfig` deliberatamente NON copiato: il percorso beta e' autosufficiente
+  (`scripts/ios-beta-prepare.sh` genera `build/BetaRelease.xcconfig` con team, bundle id ed entitlements,
+  esportato come `XCODE_XCCONFIG_FILE`), e quel file punta a `.tmp/differen-dev-carplay.entitlements`
+  inesistente in questo worktree.
+- `fastlane beta_status` OK: ultima build su ASC = **2026.4.27 (7)**, processing=VALID,
+  internal=IN_BETA_TESTING. La 8 e' libera. Auth ASC funzionante.
+- Release notes gia' pronte e committate (`fastlane/metadata/en-US/release_notes.txt`), citano build 8. Non riscritte.
+
+### Build 8 — IN CORSO
+
+Comando: `IOS_BETA_BUILD_NUMBER=8 LC_ALL/LANG=en_US.UTF-8 fastlane beta` da `apps/ios/`
+(build + upload TestFlight, `skip_waiting_for_build_processing:true`).
+**Se questo run muore qui: NON rifare la build alla cieca — controlla prima con `fastlane beta_status`
+se la build 8 risulta gia' caricata su App Store Connect.**
