@@ -60,9 +60,14 @@ Procedo comunque con: (1) fix app-side del routing e dei messaggi d'errore, (2) 
 ## RISULTATI TEST (dopo il fix)
 
 - `swift test` in `apps/shared/OpenClawKit`: **134/134 passati** (inclusi 4 nuovi test `provisionClaim*` in `DeepLinksSecurityTests.swift`).
-- `xcodebuild test` su simulatore "Iànua Test iPhone 17 Pro" (scheme `OpenClaw`, solo i nuovi target): **8/8 passati** (`WizardQRRecognizerTests` × 5, `IanuaProvisioningClaimDecodingTests` × 3). Suite completa `OpenClawTests`/`OpenClawLogicTests` da eseguire prima della build finale (prossimo step).
+- `xcodebuild test` su simulatore "Iànua Test iPhone 17 Pro" (scheme `OpenClaw`, solo i nuovi target): **8/8 passati** (`WizardQRRecognizerTests` × 5, `IanuaProvisioningClaimDecodingTests` × 3).
+- Suite completa `OpenClawTests`/`OpenClawLogicTests`: **238/240 passati**. 2 fallimenti: `ShareToAgentDeepLinkTests.buildURLReturnsNilWhenPayloadEmpty()` e `NodeAppModelInvokeTests.handleInvokeCanvasCommandsUpdateScreen()`. **Confermati preesistenti e fuori scope**: `git diff HEAD~1 --stat` mostra che il fix tocca SOLO `Onboarding/{QRScannerView,OnboardingWizardView,WizardQRRecognizer}.swift`, `Provisioning/IanuaProvisioningClient.swift`, `OpenClawKit/DeepLinks.swift` + relativi test — nessun file di `ShareToAgentDeepLink` o `NodeAppModelInvoke`/canvas. Non necessario un secondo run completo su baseline pre-fix: lo scope del diff già esclude una relazione causale.
 
 ## FILE TOCCATI FINORA
 
 Modificati: `apps/ios/Sources/Onboarding/QRScannerView.swift`, `apps/ios/Sources/Onboarding/OnboardingWizardView.swift`, `apps/ios/Sources/Provisioning/IanuaProvisioningClient.swift`, `apps/shared/OpenClawKit/Sources/OpenClawKit/DeepLinks.swift`, `apps/shared/OpenClawKit/Tests/OpenClawKitTests/DeepLinksSecurityTests.swift`.
 Nuovi: `apps/ios/Sources/Onboarding/WizardQRRecognizer.swift`, `apps/ios/Tests/WizardQRRecognizerTests.swift`, `apps/ios/Tests/IanuaProvisioningClaimDecodingTests.swift`.
+
+## PROSSIMO: SPEC SERVER (vedi `SERVER-SPEC-provision-claim.md`)
+
+Documento di sola specifica (non codice deployabile — `provisioning.mjs` non è in questo monorepo, vedi BLOCCANTE sopra) scritto in `SERVER-SPEC-provision-claim.md` a livello di repo root. Descrive l'estensione retro-compatibile di `gateway` nella risposta 200 di `/api/provision/claim`.
