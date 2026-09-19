@@ -62,37 +62,13 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
     }
 
     /// Parse a device-pair setup code (base64url-encoded JSON: `{url, bootstrapToken?, token?, password?}`).
+    /// Also the shape minted by the provisioning gateway-pairing endpoint
+    /// (`GET /api/provision/gateway`, `status: "ready"` → `setup_code`) after a
+    /// profile-QR claim: same minter, same encoding, so no separate parser is needed.
     public static func fromSetupCode(_ code: String) -> GatewayConnectDeepLink? {
         guard let data = decodeBase64Url(code) else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         guard let urlString = json["url"] as? String else { return nil }
-        return self.build(
-            urlString: urlString,
-            bootstrapToken: json["bootstrapToken"] as? String,
-            token: json["token"] as? String,
-            password: json["password"] as? String)
-    }
-
-    /// Same shape as a setup code, but for a gateway connection handed over plainly
-    /// (e.g. as JSON fields in an `/api/provision/claim` response) rather than
-    /// base64url-encoded. Used by the account-activation QR flow, which authenticates
-    /// via a different channel than the `/pair` setup code but must connect to the
-    /// gateway under the exact same host/scheme rules.
-    public static func fromProvisionClaim(
-        url urlString: String,
-        bootstrapToken: String?,
-        token: String?,
-        password: String?) -> GatewayConnectDeepLink?
-    {
-        self.build(urlString: urlString, bootstrapToken: bootstrapToken, token: token, password: password)
-    }
-
-    private static func build(
-        urlString: String,
-        bootstrapToken: String?,
-        token: String?,
-        password: String?) -> GatewayConnectDeepLink?
-    {
         guard let parsed = URLComponents(string: urlString),
               let hostname = parsed.host, !hostname.isEmpty
         else { return nil }
@@ -115,9 +91,9 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
             port: port,
             tls: tls,
             path: normalizedPath.value,
-            bootstrapToken: bootstrapToken,
-            token: token,
-            password: password)
+            bootstrapToken: json["bootstrapToken"] as? String,
+            token: json["token"] as? String,
+            password: json["password"] as? String)
     }
 
     private static func decodeBase64Url(_ input: String) -> Data? {

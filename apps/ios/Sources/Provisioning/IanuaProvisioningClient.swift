@@ -19,6 +19,14 @@ enum IanuaProvisionError: LocalizedError, Equatable {
     case throttled(Int)
     case unreachable
     case server(String)
+    /// `GET /api/provision/gateway` → `{"status":"none"}`: il login è riuscito ma
+    /// nessun pairing gateway è in corso per questo dispositivo.
+    case gatewayNotPaired
+    /// Il polling è rimasto su `"pending"` oltre il tetto di attesa lato app.
+    case gatewayPairingTimedOut
+    /// `"status":"ready"` ma `setup_code` manca o non è nel formato che
+    /// `GatewayConnectDeepLink.fromSetupCode` sa leggere.
+    case gatewayCodeUnreadable
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +45,15 @@ enum IanuaProvisionError: LocalizedError, Equatable {
             "Iànua non raggiungibile. Controlla la connessione Internet e riprova."
         case let .server(message):
             message
+        case .gatewayNotPaired:
+            "Accesso riuscito, ma nessun collegamento gateway è stato avviato per questo dispositivo. "
+                + "Genera un nuovo QR dal Mac (\"/pair qr\") oppure riprova dal profilo."
+        case .gatewayPairingTimedOut:
+            "Accesso riuscito, ma il collegamento al gateway non è arrivato in tempo. "
+                + "Riprova, oppure usa il QR generato sul Mac (\"/pair qr\")."
+        case .gatewayCodeUnreadable:
+            "Accesso riuscito, ma il codice di collegamento ricevuto dal server non è nel formato "
+                + "atteso da questa versione dell'app. Aggiorna l'app o chiedi all'operatore un QR \"/pair\"."
         }
     }
 }
@@ -74,31 +91,58 @@ actor IanuaProvisioningClient {
 
         struct Gateway: Decodable, Equatable {
             let status: String
-            /// Campi di connessione del gateway, quando il server li allega alla
-            /// claim (stessa forma di un setup code `/pair`, ma passati come JSON
-            /// semplice invece che base64url). Opzionali per compatibilità con un
-            /// server che manda solo `status`: finché non li spedisce, il device
-            /// si attiva per la chat ma il nodo non si collega da solo.
-            let url: String?
-            let bootstrapToken: String?
-            let token: String?
-            let password: String?
-
-            var connectDeepLink: GatewayConnectDeepLink? {
-                guard let url else { return nil }
-                return GatewayConnectDeepLink.fromProvisionClaim(
-                    url: url, bootstrapToken: self.bootstrapToken, token: self.token, password: self.password)
-            }
         }
 
         let tenant: Tenant
         let user: User
         let device: Device
-        /// Stato del setup code del gateway, più i campi di connessione quando il
-        /// server li allega (vedi `Gateway.connectDeepLink`). Finché il server manda
-        /// solo `status`, `connectDeepLink` è nil e il chiamante lo tratta come "QR
-        /// valido ma senza gateway", non come un errore.
+        /// Stato del pairing gateway al momento della claim. Il collegamento vero e
+        /// proprio arriva SOLO da `GET /api/provision/gateway` (polling con la
+        /// sessione appena ricevuta, vedi `pollGatewaySetupCode`): per disegno di
+        /// sicurezza il server pubblico che risponde a `/api/provision/claim` non
+        /// custodisce mai il setup code del gateway self-hosted.
         let gateway: Gateway?
+    }
+
+    /// Risposta di `GET /api/provision/gateway`.
+    struct GatewayPollResponse: Decodable {
+        let status: String
+        let retryAfter: Double?
+        let setupCode: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case retryAfter = "retry_after"
+            case setupCode = "setup_code"
+        }
+    }
+
+    /// Esito di una singola interrogazione di `GET /api/provision/gateway`, prima di
+    /// decidere cosa fare (funzione pura, testabile senza rete: vedi
+    /// `IanuaProvisioningClaimDecodingTests`).
+    enum GatewayPollOutcome: Equatable {
+        case ready(GatewayConnectDeepLink)
+        case retry(after: TimeInterval)
+        case failure(IanuaProvisionError)
+    }
+
+    static let defaultGatewayPollInterval: TimeInterval = 3
+    static let defaultGatewayPollTimeout: TimeInterval = 120
+
+    static func interpret(_ response: GatewayPollResponse) -> GatewayPollOutcome {
+        switch response.status {
+        case "ready":
+            guard let code = response.setupCode, let link = GatewayConnectDeepLink.fromSetupCode(code) else {
+                return .failure(.gatewayCodeUnreadable)
+            }
+            return .ready(link)
+        case "none":
+            return .failure(.gatewayNotPaired)
+        case "pending":
+            return .retry(after: response.retryAfter.map { max($0, 1) } ?? self.defaultGatewayPollInterval)
+        default:
+            return .failure(.server("Stato gateway sconosciuto: \(response.status)."))
+        }
     }
 
     func claim(_ link: IanuaProvisionLink) async throws -> Claim {
@@ -169,6 +213,64 @@ actor IanuaProvisioningClient {
                 "Attivazione riuscita ma la sessione non è stata salvata sul dispositivo. Riprova.")
         }
         return claim
+    }
+
+    /// Interroga `GET /api/provision/gateway` con la sessione appena ottenuta da
+    /// `claim(_:)` (autenticazione via cookie jar condiviso, nessun secondo token)
+    /// finché non arriva un setup code o scade il tetto di attesa. Il minter gira
+    /// fuori banda accanto al gateway: `"pending"` è lo stato normale nei primi
+    /// secondi, non un errore.
+    func pollGatewaySetupCode(timeout: TimeInterval = IanuaProvisioningClient.defaultGatewayPollTimeout) async throws
+        -> GatewayConnectDeepLink
+    {
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            let response = try await self.fetchGatewayStatus()
+            switch Self.interpret(response) {
+            case let .ready(link):
+                return link
+            case let .failure(error):
+                throw error
+            case let .retry(interval):
+                guard Date() < deadline else {
+                    throw IanuaProvisionError.gatewayPairingTimedOut
+                }
+                try await Task.sleep(nanoseconds: UInt64(max(interval, 0) * 1_000_000_000))
+            }
+        }
+    }
+
+    private func fetchGatewayStatus() async throws -> GatewayPollResponse {
+        guard let url = URL(string: WADAPIClient.shared.baseURL + "/api/provision/gateway") else {
+            throw IanuaProvisionError.server("URL Iànua non valido")
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+
+        let data: Data
+        let http: HTTPURLResponse
+        do {
+            let (payload, response) = try await URLSession.shared.data(for: request)
+            guard let typed = response as? HTTPURLResponse else {
+                throw IanuaProvisionError.server("Risposta Iànua sconosciuta")
+            }
+            data = payload
+            http = typed
+        } catch let error as IanuaProvisionError {
+            throw error
+        } catch {
+            throw IanuaProvisionError.unreachable
+        }
+
+        guard http.statusCode == 200 else {
+            throw Self.failure(status: http.statusCode, data: data, response: http)
+        }
+
+        do {
+            return try JSONDecoder().decode(GatewayPollResponse.self, from: data)
+        } catch {
+            throw IanuaProvisionError.server("Risposta di stato gateway non valida.")
+        }
     }
 
     private static func failure(status: Int, data: Data, response: HTTPURLResponse) -> IanuaProvisionError {
