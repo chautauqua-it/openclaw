@@ -1,5 +1,7 @@
 Maintenance update for the current Iànua development release.
 
+- Iànua Realtime now shows a visible loading indicator while connecting and only reports itself as ready once the realtime session actually exists (build 9).
+- Fixed the Iànua chat clearing itself after sending a message: the conversation now stays put instead of blanking out (build 9).
 - Added CarPlay support: incoming and outgoing Iànua calls now appear on the car display, with the tenant directory and the Spock voice control.
 - Chat channel separators now follow the layout the server sends, so the phone shows the same sections as the web panel.
 - Removed the Groups section from chat, matching the web panel.
