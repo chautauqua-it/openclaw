@@ -90,6 +90,9 @@ final class SpockTalkManager {
 
     func stop() {
         if self.isActive { WADDeviceLog.shared.log("talk", "stop modalità voce") }
+        self.prewarmTask?.cancel()
+        self.prewarmTask = nil
+        self.discardPreparedSession(reason: "conversazione chiusa")
         self.receiveTask?.cancel()
         self.receiveTask = nil
         self.audioRebuildTask?.cancel()
@@ -155,11 +158,43 @@ final class SpockTalkManager {
         var clientSecret: String?
         var wsUrl: String?
         var error: String?
+        /// ISO8601 o epoch secondo la risposta OpenAI inoltrata dal conio.
+        /// Serve solo a registrare la finestra effettiva nel log diagnostico.
+        var expiresAt: JSONValue?
+    }
+
+    /// `expiresAt` arriva come numero epoch, ma il conio lo ricopia grezzo da
+    /// OpenAI: decodificarlo come `Double` romperebbe il mint se un giorno
+    /// diventasse una stringa, e con esso tutta la voce.
+    private enum JSONValue: Decodable {
+        case number(Double)
+        case string(String)
+        case other
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let value = try? container.decode(Double.self) {
+                self = .number(value)
+            } else if let value = try? container.decode(String.self) {
+                self = .string(value)
+            } else {
+                self = .other
+            }
+        }
+
+        var description: String {
+            switch self {
+            case let .number(value): String(Int(value))
+            case let .string(value): value
+            case .other: "?"
+            }
+        }
     }
 
     private struct MintHTTPError: Error {
         let message: String
         let requiresLogin: Bool
+        let statusCode: Int
     }
 
     private var connectStartedAt: Date?
@@ -167,14 +202,24 @@ final class SpockTalkManager {
     private static let prewarmCooldown: TimeInterval = 30
     private static let openAIPrewarmURL = URL(string: "https://api.openai.com/v1/models")!
 
-    /// Riscalda DNS/TLS quando la vista voce compare, prima che l'utente tocchi
-    /// avvia, così il mint successivo non paga l'handshake a freddo.
+    /// Prepara tutto il preparabile quando la home compare, prima che l'utente
+    /// tocchi il microfono: la sessione realtime vera e propria (vedi
+    /// `prewarmSession`) e, come rete di sicurezza per quando l'anticipo non
+    /// può partire, l'handshake TLS verso i due host coinvolti.
     /// Best-effort e silenzioso: nessun errore va mostrato e `phase` non va mai
     /// toccata da qui.
     func prewarmConnection() {
+        self.installLifecycleObservers()
+        self.prewarmSession()
         if let lastPrewarmAt, Date().timeIntervalSince(lastPrewarmAt) < Self.prewarmCooldown { return }
         self.lastPrewarmAt = Date()
-        var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("health"))
+
+        // La vecchia richiesta puntava a `…/api/mobile/realtime/health`, un path
+        // che il gateway non instrada (accetta solo session|tool|usage|devlog):
+        // rispondeva 401 e scaldava il TLS per caso. La radice pubblica fa lo
+        // stesso lavoro senza fingere una API che non esiste.
+        var request = URLRequest(url: URL(string: IanuaPublicEndpointPolicy.canonicalBaseURL)!)
+        request.httpMethod = "HEAD"
         request.timeoutInterval = 5
         URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
 
@@ -193,42 +238,72 @@ final class SpockTalkManager {
         let connectStartedAt = Date()
         IanuaSessionStore.restoreIfNeeded()
 
+        // Un anticipo in volo va atteso, mai duplicato: toccare mentre il conio
+        // è a metà deve prendere quella sessione, non aprirne una seconda.
+        if let inFlight = self.prewarmTask { await inFlight.value }
+        let prepared = self.consumePreparedSession()
+
         async let permissionGranted = Self.requestMicPermission()
-        async let mintResult = self.requestMint()
+        async let mintOutcome = self.mintIfNeeded(skip: prepared != nil)
 
         let granted = await permissionGranted
         WADDeviceLog.shared.log(
             "talk.perf",
             String(format: "permesso microfono in %.2fs", Date().timeIntervalSince(connectStartedAt)))
         guard granted else {
+            if let prepared { self.close(prepared, reason: "permesso microfono negato") }
+            _ = await mintOutcome
             self.fail("Permesso microfono negato: abilitalo in Impostazioni.")
             return
         }
 
-        let mint: MintResponse
-        do {
-            mint = try await mintResult
-        } catch let error as MintHTTPError {
-            if error.requiresLogin { IanuaSessionStore.clear() }
-            self.fail(error.message)
-            return
-        } catch {
-            self.fail("Servizio Iànua Realtime non raggiungibile: \(error.localizedDescription)")
-            return
+        let socket: URLSessionWebSocketTask
+        let adoptedReceiveTask: Task<Void, Never>?
+        if let prepared {
+            _ = await mintOutcome
+            socket = prepared.webSocket
+            adoptedReceiveTask = prepared.receiveTask
+            WADDeviceLog.shared.log(
+                "talk.perf",
+                String(
+                    format: "sessione anticipata adottata, pronta da %.1fs",
+                    Date().timeIntervalSince(prepared.readyAt)))
+        } else {
+            guard let outcome = await mintOutcome else {
+                self.fail("Il server voce non ha restituito un token.")
+                return
+            }
+            let mint: MintResponse
+            switch outcome {
+            case let .success(value):
+                mint = value
+            case let .failure(error):
+                if let http = error as? MintHTTPError {
+                    if http.requiresLogin { IanuaSessionStore.clear() }
+                    self.fail(http.message)
+                } else {
+                    self.fail("Servizio Iànua Realtime non raggiungibile: \(error.localizedDescription)")
+                }
+                return
+            }
+            guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw)
+            else {
+                self.fail(mint.error ?? "Il server voce non ha restituito un token.")
+                return
+            }
+            WADDeviceLog.shared.log(
+                "talk.perf",
+                String(format: "sessione ottenuta in %.2fs", Date().timeIntervalSince(connectStartedAt)))
+            var wsRequest = URLRequest(url: wsURL)
+            wsRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+            socket = URLSession.shared.webSocketTask(with: wsRequest)
+            socket.resume()
+            adoptedReceiveTask = nil
         }
-        guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw) else {
-            self.fail(mint.error ?? "Il server voce non ha restituito un token.")
-            return
-        }
-        WADDeviceLog.shared.log(
-            "talk.perf",
-            String(format: "sessione ottenuta in %.2fs", Date().timeIntervalSince(connectStartedAt)))
-
-        var wsRequest = URLRequest(url: wsURL)
-        wsRequest.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
-        let task = URLSession.shared.webSocketTask(with: wsRequest)
-        self.webSocket = task
-        task.resume()
+        self.webSocket = socket
+        // Assegnato prima di `startAudio`: se l'audio fallisce, `stop()` deve
+        // poter cancellare anche il loop nato durante l'anticipo.
+        self.receiveTask = adoptedReceiveTask
 
         do {
             try await self.startAudio()
@@ -242,14 +317,239 @@ final class SpockTalkManager {
             String(
                 format: "socket aperto + audio avviati in %.2fs",
                 Date().timeIntervalSince(connectStartedAt)))
-        // `task.resume()` non si attende: qui il WebSocket è solo avviato, la
+
+        if adoptedReceiveTask != nil {
+            // La sessione ha già risposto durante l'anticipo e il suo primo
+            // evento è stato consumato lì: aspettarne un altro lascerebbe la
+            // vista su `connecting` finché l'utente non parla.
+            self.connectStartedAt = nil
+            self.phase = .listening
+            return
+        }
+        // `socket.resume()` non si attende: qui il WebSocket è solo avviato, la
         // sessione OpenAI non esiste ancora. Restiamo in `.connecting` finché
         // non arriva il primo evento dal socket, che è la prova che la sessione
         // è viva: è il tratto che prima non veniva né atteso né misurato.
         self.connectStartedAt = connectStartedAt
         self.receiveTask = Task { [weak self] in
-            await self?.receiveLoop(task)
+            await self?.receiveLoop(socket)
         }
+    }
+
+    // MARK: - Anticipo della sessione
+
+    /// Sessione realtime già aperta e confermata da OpenAI che aspetta l'utente.
+    /// Sta qui e non in `webSocket` perché una conversazione che nessuno ha
+    /// ancora chiesto non deve rendere `isActive` vero né muovere la vista.
+    private struct PreparedSession {
+        let webSocket: URLSessionWebSocketTask
+        let receiveTask: Task<Void, Never>
+        let keepAliveTask: Task<Void, Never>
+        let readyAt: Date
+    }
+
+    private var prepared: PreparedSession?
+    private var prewarmTask: Task<Void, Never>?
+    private var prewarmExpiryTask: Task<Void, Never>?
+    private var prewarmRetryAfter: Date?
+    private var prewarmUnavailable = false
+    private var lastPrewarmSessionAt: Date?
+    private var lifecycleObservers: [NSObjectProtocol] = []
+
+    /// Oltre questa finestra l'anticipo non sta più servendo nessuno e il socket
+    /// verso OpenAI si chiude. Il vincolo non è la scadenza del token: il conio
+    /// lo emette con `expires_after.seconds = 600`, dieci minuti, e quella
+    /// finestra serve solo ad *aprire* la connessione, non a tenerla aperta.
+    private static let preparedSessionLifetime: TimeInterval = 240
+    /// Un socket fermo viene chiuso dal NAT cellulare molto prima dei 4 minuti.
+    private static let preparedSessionPingInterval: TimeInterval = 45
+    private static let prewarmRetryDelay: TimeInterval = 300
+    /// Ogni ritorno in primo piano scarta l'anticipo e ne riaprirebbe un altro:
+    /// alternare le app costerebbe un conio e una sessione OpenAI a ogni giro.
+    private static let prewarmSessionCooldown: TimeInterval = 60
+
+    /// Conia il token e apre il WebSocket verso OpenAI *prima* che l'utente
+    /// apra la schermata voce. È il tratto che vale il grosso dell'attesa: due
+    /// andate-e-ritorno verso OpenAI che non si possono accorciare, solo
+    /// anticipare. La pipeline audio resta fuori di proposito: attiverebbe il
+    /// microfono mentre l'utente è ancora sulla home.
+    func prewarmSession() {
+        guard !self.isActive, self.prepared == nil, self.prewarmTask == nil else { return }
+        guard !self.prewarmUnavailable else { return }
+        if let prewarmRetryAfter, Date() < prewarmRetryAfter { return }
+        // Senza sessione Iànua il conio risponderebbe 401: si aspetta il login
+        // invece di bruciare una richiesta a ogni ritorno in primo piano.
+        guard IanuaSessionStore.hasPersistedSession() else { return }
+        if let lastPrewarmSessionAt,
+           Date().timeIntervalSince(lastPrewarmSessionAt) < Self.prewarmSessionCooldown
+        {
+            return
+        }
+        self.lastPrewarmSessionAt = Date()
+        self.prewarmTask = Task { [weak self] in
+            guard let self else { return }
+            let prepared = await self.openPreparedSession()
+            self.prewarmTask = nil
+            guard let prepared else { return }
+            guard !Task.isCancelled else {
+                self.close(prepared, reason: "anticipo annullato")
+                return
+            }
+            self.prepared = prepared
+            self.armPreparedSessionExpiry()
+        }
+    }
+
+    private func openPreparedSession() async -> PreparedSession? {
+        let startedAt = Date()
+        IanuaSessionStore.restoreIfNeeded()
+        let mint: MintResponse
+        do {
+            mint = try await self.requestMint()
+        } catch let error as MintHTTPError {
+            // 403 significa realtime non abilitato per questo account: non
+            // cambia riprovando, quindi l'anticipo si spegne per il processo.
+            // Il 401 invece no: basta un login e torna valido.
+            if error.statusCode == 403 {
+                self.prewarmUnavailable = true
+            } else {
+                self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            }
+            WADDeviceLog.shared.log("talk.perf", "anticipo saltato: \(error.message)")
+            return nil
+        } catch {
+            self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            return nil
+        }
+        guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw) else {
+            self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            return nil
+        }
+
+        var request = URLRequest(url: wsURL)
+        request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        let socket = URLSession.shared.webSocketTask(with: request)
+        socket.resume()
+
+        // Il primo evento è l'unica prova che la sessione OpenAI esiste davvero:
+        // senza attenderlo si anticiperebbe un socket che potrebbe non aprirsi.
+        guard let first = await Self.receiveFirstEvent(socket, timeout: 20) else {
+            socket.cancel(with: .abnormalClosure, reason: nil)
+            self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            WADDeviceLog.shared.log("talk.perf", "anticipo fallito: nessun evento dalla sessione")
+            return nil
+        }
+        self.applySessionModel(rawEvent: first)
+        WADDeviceLog.shared.log(
+            "talk",
+            String(format: "connesso: sessione realtime pronta in %.2fs", Date().timeIntervalSince(startedAt)))
+        if let expiresAt = mint.expiresAt {
+            WADDeviceLog.shared.log("talk.perf", "token anticipo valido fino a \(expiresAt.description)")
+        }
+
+        return PreparedSession(
+            webSocket: socket,
+            receiveTask: Task { [weak self] in await self?.receiveLoop(socket) },
+            keepAliveTask: Self.keepAlive(socket),
+            readyAt: Date())
+    }
+
+    /// Primo messaggio dal socket, con timeout: `receive()` da solo resterebbe
+    /// appeso per sempre se OpenAI non istanziasse mai la sessione.
+    private static func receiveFirstEvent(
+        _ socket: URLSessionWebSocketTask,
+        timeout: TimeInterval) async -> String?
+    {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                guard let message = try? await socket.receive() else { return nil }
+                switch message {
+                case let .string(text): return text
+                case let .data(data): return String(data: data, encoding: .utf8)
+                @unknown default: return nil
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private static func keepAlive(_ socket: URLSessionWebSocketTask) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.preparedSessionPingInterval))
+                guard !Task.isCancelled else { return }
+                socket.sendPing { _ in }
+            }
+        }
+    }
+
+    /// Prende l'anticipo per usarlo davvero. Restituisce nil se nel frattempo
+    /// il socket è morto, così il tap conia una sessione nuova invece di
+    /// adottarne una chiusa.
+    private func consumePreparedSession() -> PreparedSession? {
+        guard let prepared = self.prepared else { return nil }
+        self.prepared = nil
+        self.prewarmExpiryTask?.cancel()
+        self.prewarmExpiryTask = nil
+        prepared.keepAliveTask.cancel()
+        guard prepared.webSocket.state == .running else {
+            prepared.receiveTask.cancel()
+            prepared.webSocket.cancel(with: .goingAway, reason: nil)
+            WADDeviceLog.shared.log("talk.perf", "anticipo scartato: socket non più aperto")
+            return nil
+        }
+        return prepared
+    }
+
+    private func discardPreparedSession(reason: String) {
+        self.prewarmExpiryTask?.cancel()
+        self.prewarmExpiryTask = nil
+        guard let prepared = self.prepared else { return }
+        self.prepared = nil
+        self.close(prepared, reason: reason)
+    }
+
+    private func close(_ prepared: PreparedSession, reason: String) {
+        prepared.keepAliveTask.cancel()
+        prepared.receiveTask.cancel()
+        prepared.webSocket.cancel(with: .goingAway, reason: nil)
+        WADDeviceLog.shared.log("talk.perf", "anticipo chiuso: \(reason)")
+    }
+
+    private func armPreparedSessionExpiry() {
+        self.prewarmExpiryTask?.cancel()
+        self.prewarmExpiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.preparedSessionLifetime))
+            guard !Task.isCancelled else { return }
+            self?.discardPreparedSession(reason: "scaduto senza uso")
+        }
+    }
+
+    private func installLifecycleObservers() {
+        guard self.lifecycleObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        self.lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main)
+        { [weak self] _ in
+            // Una sessione adottata è già in `webSocket` e la gestisce `stop()`:
+            // qui muore solo l'anticipo che nessuno ha usato.
+            Task { @MainActor in self?.discardPreparedSession(reason: "app in background") }
+        })
+        self.lifecycleObservers.append(center.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main)
+        { [weak self] _ in
+            Task { @MainActor in self?.prewarmSession() }
+        })
     }
 
     private static func requestMicPermission() async -> Bool {
@@ -261,18 +561,31 @@ final class SpockTalkManager {
         }
     }
 
+    /// Nil quando una sessione anticipata è già disponibile: il `Result` tiene
+    /// l'errore vivo fino al punto in cui `connect` sa se gli serve davvero,
+    /// senza rinunciare al parallelismo con il permesso microfono.
+    private func mintIfNeeded(skip: Bool) async -> Result<MintResponse, any Error>? {
+        guard !skip else { return nil }
+        do {
+            return .success(try await self.requestMint())
+        } catch {
+            return .failure(error)
+        }
+    }
+
     private func requestMint() async throws -> MintResponse {
         var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("session"))
         request.httpMethod = "POST"
         request.timeoutInterval = 12
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw MintHTTPError(message: "Risposta Iànua Realtime non valida.", requiresLogin: false)
+            throw MintHTTPError(message: "Risposta Iànua Realtime non valida.", requiresLogin: false, statusCode: 0)
         }
         if let message = IanuaRealtimeHTTPPolicy.errorMessage(statusCode: http.statusCode, data: data) {
             throw MintHTTPError(
                 message: message,
-                requiresLogin: IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode))
+                requiresLogin: IanuaRealtimeHTTPPolicy.requiresLogin(statusCode: http.statusCode),
+                statusCode: http.statusCode)
         }
         return try JSONDecoder().decode(MintResponse.self, from: data)
     }
@@ -410,8 +723,14 @@ final class SpockTalkManager {
                 }
                 if let text { self.handleEvent(text) }
             } catch {
-                if !Task.isCancelled, self.isActive {
-                    self.fail("Connessione voce interrotta: \(error.localizedDescription)")
+                if !Task.isCancelled {
+                    if self.isActive {
+                        self.fail("Connessione voce interrotta: \(error.localizedDescription)")
+                    } else {
+                        // Anticipo morto prima di essere usato: va scartato, o il
+                        // tap successivo adotterebbe un socket già chiuso.
+                        self.discardPreparedSession(reason: "socket chiuso da OpenAI")
+                    }
                 }
                 return
             }
@@ -423,6 +742,16 @@ final class SpockTalkManager {
               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = event["type"] as? String
         else { return }
+
+        // Anticipo in corso: la sessione esiste ma nessuno l'ha ancora chiesta.
+        // Si aggiorna solo il modello e si ignora il resto, così un evento
+        // inatteso non può muovere la vista di una conversazione mai aperta.
+        guard self.isActive else {
+            if type == "session.created" || type == "session.updated" {
+                self.applySessionModel(event: event)
+            }
+            return
+        }
 
         // Primo evento ricevuto: la sessione risponde davvero, solo ora la voce
         // è pronta. Vale qualunque evento, non solo `session.created`, così un
@@ -446,11 +775,7 @@ final class SpockTalkManager {
                 self.audio.play(base64: delta)
             }
         case "session.created", "session.updated":
-            if let session = event["session"] as? [String: Any],
-               let model = session["model"] as? String, !model.isEmpty
-            {
-                self.sessionModel = model
-            }
+            self.applySessionModel(event: event)
         case "response.created":
             self.responseActive = true
         case "response.done":
@@ -508,6 +833,20 @@ final class SpockTalkManager {
         default:
             break
         }
+    }
+
+    private func applySessionModel(event: [String: Any]) {
+        guard let session = event["session"] as? [String: Any],
+              let model = session["model"] as? String, !model.isEmpty
+        else { return }
+        self.sessionModel = model
+    }
+
+    private func applySessionModel(rawEvent: String) {
+        guard let data = rawEvent.data(using: .utf8),
+              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        self.applySessionModel(event: event)
     }
 
     /// Fire-and-forget: ship Realtime token usage (no transcript, no audio) to
