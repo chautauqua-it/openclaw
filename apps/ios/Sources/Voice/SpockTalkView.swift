@@ -221,14 +221,23 @@ struct SpockTalkView: View {
 
     @ViewBuilder private var footer: some View {
         if self.manager.phase == .connecting {
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 ProgressView()
-                    .controlSize(.small)
+                    .progressViewStyle(.circular)
+                    .controlSize(.regular)
                     .tint(self.accent)
                 Text(self.footerText)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(self.accent)
             }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(self.accent.opacity(0.12))
+                    .overlay(Capsule(style: .continuous).stroke(self.accent.opacity(0.35), lineWidth: 1)))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Connessione in corso")
             .padding(.bottom, 24)
         } else {
             Text(self.footerText)
@@ -284,11 +293,13 @@ struct KittVoiceMeter: View {
             HStack(alignment: .center, spacing: 14) {
                 self.column(
                     segments: Self.sideSegments,
-                    level: self.columnLevel(jitter: sin(t * 9.1) * 0.5 + 0.5, scale: 0.72))
-                self.column(segments: Self.centerSegments, level: self.columnLevel(jitter: 1.0, scale: 1.0))
+                    level: self.columnLevel(t: t, jitter: sin(t * 9.1) * 0.5 + 0.5, scale: 0.72, phase: 0))
+                self.column(
+                    segments: Self.centerSegments,
+                    level: self.columnLevel(t: t, jitter: 1.0, scale: 1.0, phase: 0.7))
                 self.column(
                     segments: Self.sideSegments,
-                    level: self.columnLevel(jitter: sin(t * 7.3 + 1.9) * 0.5 + 0.5, scale: 0.72))
+                    level: self.columnLevel(t: t, jitter: sin(t * 7.3 + 1.9) * 0.5 + 0.5, scale: 0.72, phase: 1.4))
             }
         }
         .animation(.linear(duration: 0.06), value: self.level)
@@ -296,11 +307,13 @@ struct KittVoiceMeter: View {
 
     /// Livello per colonna: le laterali seguono il centro con un'oscillazione
     /// leggera così il meter "vive" come quello di KITT invece di muoversi in blocco.
-    private func columnLevel(jitter: Double, scale: Double) -> Double {
+    private func columnLevel(t: Double, jitter: Double, scale: Double, phase: Double) -> Double {
         guard self.active else { return 0 }
         if self.connecting {
-            // Respiro minimo durante la connessione.
-            return 0.08 * jitter
+            // Onda che attraversa le tre colonne: il vecchio respiro a 0.08
+            // restava sotto la soglia di accensione dei segmenti, così durante
+            // la connessione il meter sembrava semplicemente spento.
+            return 0.32 + 0.58 * (sin(t * 3.4 - phase) * 0.5 + 0.5)
         }
         let base = self.level * scale
         return min(1.0, base * (0.75 + 0.25 * jitter))

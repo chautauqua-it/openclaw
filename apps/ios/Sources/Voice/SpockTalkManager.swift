@@ -162,19 +162,31 @@ final class SpockTalkManager {
         let requiresLogin: Bool
     }
 
+    private var connectStartedAt: Date?
     private var lastPrewarmAt: Date?
     private static let prewarmCooldown: TimeInterval = 30
+    private static let openAIPrewarmURL = URL(string: "https://api.openai.com/v1/models")!
 
-    /// Riscalda DNS/TLS verso `serverBaseURL` quando la vista voce compare,
-    /// prima che l'utente tocchi avvia, così il mint successivo non paga
-    /// l'handshake a freddo. Best-effort e silenzioso: nessun errore va
-    /// mostrato e `phase` non va mai toccata da qui.
+    /// Riscalda DNS/TLS quando la vista voce compare, prima che l'utente tocchi
+    /// avvia, così il mint successivo non paga l'handshake a freddo.
+    /// Best-effort e silenzioso: nessun errore va mostrato e `phase` non va mai
+    /// toccata da qui.
     func prewarmConnection() {
         if let lastPrewarmAt, Date().timeIntervalSince(lastPrewarmAt) < Self.prewarmCooldown { return }
         self.lastPrewarmAt = Date()
         var request = URLRequest(url: self.serverBaseURL.appendingPathComponent("health"))
         request.timeoutInterval = 5
         URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
+
+        // Il grosso dell'attesa a freddo non è il nostro server ma il WebSocket
+        // verso api.openai.com, host diverso e quindi handshake separato. La
+        // richiesta torna 401 senza chiave: va benissimo, serve solo a risolvere
+        // il DNS e negoziare il TLS (il ticket di sessione vale anche per la
+        // connessione successiva, che è quella del wss).
+        var openai = URLRequest(url: Self.openAIPrewarmURL)
+        openai.httpMethod = "HEAD"
+        openai.timeoutInterval = 5
+        URLSession.shared.dataTask(with: openai) { _, _, _ in }.resume()
     }
 
     private func connect() async {
@@ -228,9 +240,13 @@ final class SpockTalkManager {
         WADDeviceLog.shared.log(
             "talk",
             String(
-                format: "connesso: sessione realtime + audio avviati in %.2fs",
+                format: "socket aperto + audio avviati in %.2fs",
                 Date().timeIntervalSince(connectStartedAt)))
-        self.phase = .listening
+        // `task.resume()` non si attende: qui il WebSocket è solo avviato, la
+        // sessione OpenAI non esiste ancora. Restiamo in `.connecting` finché
+        // non arriva il primo evento dal socket, che è la prova che la sessione
+        // è viva: è il tratto che prima non veniva né atteso né misurato.
+        self.connectStartedAt = connectStartedAt
         self.receiveTask = Task { [weak self] in
             await self?.receiveLoop(task)
         }
@@ -407,6 +423,21 @@ final class SpockTalkManager {
               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = event["type"] as? String
         else { return }
+
+        // Primo evento ricevuto: la sessione risponde davvero, solo ora la voce
+        // è pronta. Vale qualunque evento, non solo `session.created`, così un
+        // server che non lo manda non lascia la vista bloccata su `connecting`.
+        if case .connecting = self.phase {
+            if let connectStartedAt = self.connectStartedAt {
+                WADDeviceLog.shared.log(
+                    "talk",
+                    String(
+                        format: "connesso: sessione realtime pronta in %.2fs",
+                        Date().timeIntervalSince(connectStartedAt)))
+                self.connectStartedAt = nil
+            }
+            self.phase = .listening
+        }
 
         switch type {
         case "response.output_audio.delta", "response.audio.delta":
