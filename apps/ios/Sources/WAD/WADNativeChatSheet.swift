@@ -65,9 +65,16 @@ private struct IanuaChannel: Decodable, Identifiable, Hashable {
         case runStatus = "run_status"
     }
 
+    /// L'uguaglianza pesa SOLO sull'id: questo valore è l'elemento di path del
+    /// NavigationStack (`NavigationLink(value:)` + `navigationDestination`), e
+    /// SwiftUI ne ricava l'identità della schermata di destinazione. Includere
+    /// campi volatili — `unread`, `lastAt`, `runStatus` — significava che ogni
+    /// poll dei badge dopo un invio (markRead azzera unread, lastAt avanza,
+    /// runStatus passa a queued/running) produceva un canale "diverso": la
+    /// destinazione veniva ricreata e `IanuaThreadView` perdeva tutto il suo
+    /// @State, azzerando la conversazione a schermo.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.name == rhs.name && lhs.unread == rhs.unread && lhs.lastAt == rhs.lastAt
-            && lhs.runStatus == rhs.runStatus
+        lhs.id == rhs.id
     }
 
     func hash(into hasher: inout Hasher) {
@@ -915,6 +922,10 @@ private struct IanuaThreadView: View {
     @State private var seenIds: Set<Int> = []
     @State private var notifiedIds: Set<Int> = []
     @State private var lastReadId = 0
+    @State private var loadSeq = 0
+    @State private var appliedLoadSeq = 0
+    @State private var atBottom = true
+    @State private var scrollAfterSend = false
     @StateObject private var voiceRecorder = WADVoiceRecorder()
 
     private var isAgentChannel: Bool {
@@ -991,13 +1002,25 @@ private struct IanuaThreadView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
-            .onChange(of: self.messages.count) { _, _ in
-                if let last = self.messages.last?.id {
-                    withAnimation { proxy.scrollTo(last, anchor: .bottom) }
-                }
+            // Il conteggio non distingue "arrivato un messaggio" da "ne è
+            // sparito uno": l'ultimo id sì. E l'auto-scroll parte solo se si
+            // sta già leggendo in fondo, altrimenti chi scorre la cronologia
+            // veniva trascinato giù a ogni poll.
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height
+                    >= geometry.contentSize.height - 40
+            } action: { _, isAtBottom in
+                self.atBottom = isAtBottom
+            }
+            .onChange(of: self.messages.last?.id) { _, last in
+                guard let last else { return }
+                guard self.atBottom || self.scrollAfterSend else { return }
+                self.scrollAfterSend = false
+                withAnimation { proxy.scrollTo(last, anchor: .bottom) }
             }
             .onChange(of: self.typing) { _, isTyping in
-                if isTyping { withAnimation { proxy.scrollTo(-1, anchor: .bottom) } }
+                guard isTyping, self.atBottom else { return }
+                withAnimation { proxy.scrollTo(-1, anchor: .bottom) }
             }
             .onChange(of: self.scrollTarget) { _, target in
                 guard let target else { return }
@@ -1253,9 +1276,19 @@ private struct IanuaThreadView: View {
         }
     }
 
+    /// Il poll ogni 3s e la ricarica post-invio girano in parallelo e nessuna
+    /// delle due è cancellabile: una GET partita PRIMA dell'invio (fino a 3
+    /// tentativi con backoff, timeout 35s) può rispondere DOPO quella
+    /// dell'invio e riscrivere l'elenco con una cronologia che non contiene
+    /// ancora il messaggio appena mandato. Il progressivo scarta gli snapshot
+    /// che arrivano fuori ordine: a schermo resta sempre il più recente.
     private func load(initial: Bool) async {
+        self.loadSeq += 1
+        let seq = self.loadSeq
         do {
             let snapshot = try await IanuaChatAPI.shared.snapshot(channel: self.channel.id)
+            guard seq > self.appliedLoadSeq else { return }
+            self.appliedLoadSeq = seq
             if initial {
                 self.seenIds = Set(snapshot.messages.map(\.id))
             } else {
@@ -1310,6 +1343,9 @@ private struct IanuaThreadView: View {
             self.draft = ""
             self.replyTarget = nil
             self.pendingAttachments = []
+            // Mandare un messaggio è un'azione esplicita: si scende in fondo
+            // anche se si stava leggendo più in alto.
+            self.scrollAfterSend = true
             await self.load(initial: false)
             self.error = nil
         } catch {
@@ -1331,6 +1367,7 @@ private struct IanuaThreadView: View {
                 attachments: [id])
             self.draft = ""
             self.replyTarget = nil
+            self.scrollAfterSend = true
             await self.load(initial: false)
             self.error = nil
         } catch {
