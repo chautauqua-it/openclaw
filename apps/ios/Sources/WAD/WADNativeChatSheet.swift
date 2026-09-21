@@ -1002,6 +1002,15 @@ private struct IanuaThreadView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
+            // L'ancora di default mette lo ScrollView già in fondo al primo
+            // layout utile (compreso il caricamento async iniziale), invece
+            // di affidarsi solo a scrollTo su un id che nella LazyVStack
+            // potrebbe non essere ancora stato disegnato: quel caso limite è
+            // proprio quello che rompeva l'apertura a freddo di ogni chat.
+            // Solo `.initialOffset`: estesa ai cambi di dimensione riporterebbe
+            // in fondo anche chi sta leggendo la cronologia, scavalcando la
+            // guardia `atBottom` qui sotto.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             // Il conteggio non distingue "arrivato un messaggio" da "ne è
             // sparito uno": l'ultimo id sì. E l'auto-scroll parte solo se si
             // sta già leggendo in fondo, altrimenti chi scorre la cronologia
