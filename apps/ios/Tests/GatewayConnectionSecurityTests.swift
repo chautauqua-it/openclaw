@@ -107,7 +107,6 @@ import Testing
         let controller = makeController()
 
         #expect(controller._test_resolveManualUseTLS(host: "gateway.example.com", useTLS: false) == true)
-        #expect(controller._test_resolveManualUseTLS(host: "openclaw.local", useTLS: false) == true)
         #expect(controller._test_resolveManualUseTLS(host: "127.attacker.example", useTLS: false) == true)
 
         #expect(controller._test_resolveManualUseTLS(host: "localhost", useTLS: false) == false)
@@ -116,6 +115,25 @@ import Testing
         #expect(controller._test_resolveManualUseTLS(host: "[::1]", useTLS: false) == false)
         #expect(controller._test_resolveManualUseTLS(host: "::ffff:127.0.0.1", useTLS: false) == false)
         #expect(controller._test_resolveManualUseTLS(host: "0.0.0.0", useTLS: false) == false)
+    }
+
+    /// Same LAN allowance as GatewayConnectDeepLink.fromSetupCode / DeepLinkParser for the
+    /// QR-pairing path (isLocalNetworkHost, mirroring the server's isMobilePairingCleartextAllowedHost):
+    /// manual entry of a `gateway.bind=lan` host must not be forced onto TLS while the QR
+    /// code minted for that same host is accepted in the clear.
+    @Test @MainActor func manualConnectionsAllowPrivateLanHostsAsCleartext() async {
+        let controller = makeController()
+
+        #expect(controller._test_resolveManualUseTLS(host: "192.168.1.42", useTLS: false) == false)
+        #expect(controller._test_resolveManualUseTLS(host: "10.0.0.5", useTLS: false) == false)
+        #expect(controller._test_resolveManualUseTLS(host: "172.16.0.9", useTLS: false) == false)
+        #expect(controller._test_resolveManualUseTLS(host: "169.254.1.1", useTLS: false) == false)
+        #expect(controller._test_resolveManualUseTLS(host: "openclaw.local", useTLS: false) == false)
+        #expect(controller._test_resolveManualUseTLS(host: "peters-mac-studio-1", useTLS: false) == false)
+
+        // Still not a private LAN address: TLS stays required.
+        #expect(controller._test_resolveManualUseTLS(host: "172.32.0.9", useTLS: false) == true)
+        #expect(controller._test_resolveManualUseTLS(host: "8.8.8.8", useTLS: false) == true)
     }
 
     @Test @MainActor func manualDefaultPortUses443OnlyForTailnetTLSHosts() async {

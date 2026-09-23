@@ -3,6 +3,13 @@ Maintenance update for the current Iànua development release.
 - Iànua Realtime now opens its session as soon as the voice screen appears instead of waiting for the microphone tap: the token mint and the OpenAI connection, about 2.3 seconds, are paid while you are still looking at the screen (build 10). The anticipated session never turns the microphone on early, expires on its own if unused, and is not reopened every time you switch apps.
 - Iànua Realtime now shows a visible loading indicator while connecting and only reports itself as ready once the realtime session actually exists (build 9).
 - Fixed the Iànua chat clearing itself after sending a message: the conversation now stays put instead of blanking out (build 9).
+- Fixed profile activation QR: the code shown on your Iànua profile page is now recognized during first-launch setup, instead of being rejected with a generic "not a valid pairing code" message (build 8).
+- Every activation QR rejection now shows a specific reason (expired, already used, revoked, device key not trusted, or too many attempts), instead of one generic error (build 8).
+- Fixed device activation: pairing QR codes issued for a gateway on the local network are accepted again, instead of being rejected without any message (build 7).
+- Manual connection now follows the same local-network rule as the QR code, so a host that pairs by scan is no longer refused when typed by hand (build 7).
+- The QR scanner now explains when a scanned code is not a valid or current activation code, instead of appearing to hang (build 7).
+- Chat message text can now be selected and copied freely, including partial selections (build 7).
+- Chat attachments now open inside the app instead of being handed to Safari, where the session was lost (build 7).
 - Added CarPlay support: incoming and outgoing Iànua calls now appear on the car display, with the tenant directory and the Spock voice control.
 - Chat channel separators now follow the layout the server sends, so the phone shows the same sections as the web panel.
 - Removed the Groups section from chat, matching the web panel.

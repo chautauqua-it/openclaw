@@ -172,6 +172,9 @@ struct OnboardingWizardView: View {
                         onGatewayLink: { link in
                             self.handleScannedLink(link)
                         },
+                        onProvisionLink: { link in
+                            self.handleProvisionLink(link)
+                        },
                         onError: { error in
                             self.showQRScanner = false
                             self.statusLine = "Scanner error: \(error)"
@@ -204,16 +207,15 @@ struct OnboardingWizardView: View {
                             return
                         }
                         if let message = self.detectQRCode(from: data) {
-                            if let link = GatewayConnectDeepLink.fromSetupCode(message) {
+                            switch WizardQRRecognizer.recognize(message) {
+                            case let .gateway(link):
                                 self.handleScannedLink(link)
                                 return
-                            }
-                            if let url = URL(string: message),
-                               let route = DeepLinkParser.parse(url),
-                               case let .gateway(link) = route
-                            {
-                                self.handleScannedLink(link)
+                            case let .provision(link):
+                                self.handleProvisionLink(link)
                                 return
+                            case nil:
+                                break
                             }
                         }
                         self.showQRScanner = false
@@ -779,6 +781,61 @@ struct OnboardingWizardView: View {
             self.selectedMode = link.tls ? .remoteDomain : .homeNetwork
         }
         Task { await self.connectManual() }
+    }
+
+    /// A QR from the person's Iànua profile page (`ianua://provision?...`), not a
+    /// Mac `/pair` setup code. Claiming it authenticates the person's Iànua account;
+    /// the gateway itself is never in the claim response (the public Iànua server
+    /// doesn't hold the self-hosted gateway's setup code by design), so after a
+    /// successful claim we poll `GET /api/provision/gateway` with the freshly
+    /// authenticated session until it hands us one, then chain into
+    /// `handleScannedLink` so one QR does both login and gateway pairing. Every
+    /// outcome — claim failure, no pairing started, pairing timeout, an unreadable
+    /// code, and success — gets its own message: this path used to fall through to a
+    /// generic "not a valid pairing code" error.
+    private func handleProvisionLink(_ link: IanuaProvisionLink) {
+        self.showQRScanner = false
+        self.connectMessage = "Activating with your profile QR…"
+        self.statusLine = "Activating with your profile QR…"
+        Task { await self.claimProvisionLink(link) }
+    }
+
+    private func claimProvisionLink(_ link: IanuaProvisionLink) async {
+        let claim: IanuaProvisioningClient.Claim
+        do {
+            claim = try await IanuaProvisioningClient.shared.claim(link)
+        } catch let error as IanuaProvisionError {
+            let message = error.errorDescription ?? "Activation failed."
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+            return
+        } catch {
+            let message = "Activation failed: \(error.localizedDescription)"
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+            return
+        }
+
+        self.statusLine = "Signed in as \(claim.user.nome) (\(claim.tenant.nome)). Waiting for the gateway…"
+        do {
+            let gatewayLink = try await IanuaProvisioningClient.shared.pollGatewaySetupCode()
+            self.statusLine = "Signed in as \(claim.user.nome) (\(claim.tenant.nome)). Connecting to the gateway…"
+            self.handleScannedLink(gatewayLink)
+        } catch let error as IanuaProvisionError {
+            let message = "Signed in as \(claim.user.nome) (\(claim.tenant.nome)). " + (error.errorDescription ?? "")
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+        } catch {
+            let message =
+                "Signed in as \(claim.user.nome) (\(claim.tenant.nome)), but the gateway lookup failed: "
+                    + error.localizedDescription
+            self.connectMessage = nil
+            self.statusLine = message
+            self.scannerError = message
+        }
     }
 
     private func openQRScannerFromOnboarding() {

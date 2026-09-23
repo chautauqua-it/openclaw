@@ -791,7 +791,12 @@ final class GatewayConnectionController {
     }
 
     private func shouldRequireTLS(host: String) -> Bool {
-        !Self.isLoopbackHost(host)
+        // Mirrors the server's own gate for cleartext ws (src/pairing/setup-code.ts:
+        // isMobilePairingCleartextAllowedHost), which allows the whole private LAN when
+        // `gateway.bind=lan`, not just loopback. Same allowance as DeepLinkParser/
+        // GatewayConnectDeepLink for the QR-pairing path, so manual entry of the same
+        // host isn't forced onto TLS while the QR code for it is accepted in the clear.
+        !LoopbackHost.isLocalNetworkHost(host)
     }
 
     private func shouldForceTLS(host: String) -> Bool {
@@ -826,51 +831,6 @@ final class GatewayConnectionController {
         let raw = UserDefaults.standard.string(forKey: "gateway.public.path")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return raw.isEmpty ? nil : raw
-    }
-
-    private static func isLoopbackHost(_ rawHost: String) -> Bool {
-        var host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !host.isEmpty else { return false }
-
-        if host.hasPrefix("[") && host.hasSuffix("]") {
-            host.removeFirst()
-            host.removeLast()
-        }
-        if host.hasSuffix(".") {
-            host.removeLast()
-        }
-        if let zoneIndex = host.firstIndex(of: "%") {
-            host = String(host[..<zoneIndex])
-        }
-        if host.isEmpty { return false }
-
-        if host == "localhost" || host == "0.0.0.0" || host == "::" {
-            return true
-        }
-        return Self.isLoopbackIPv4(host) || Self.isLoopbackIPv6(host)
-    }
-
-    private static func isLoopbackIPv4(_ host: String) -> Bool {
-        var addr = in_addr()
-        let parsed = host.withCString { inet_pton(AF_INET, $0, &addr) == 1 }
-        guard parsed else { return false }
-        let value = UInt32(bigEndian: addr.s_addr)
-        let firstOctet = UInt8((value >> 24) & 0xFF)
-        return firstOctet == 127
-    }
-
-    private static func isLoopbackIPv6(_ host: String) -> Bool {
-        var addr = in6_addr()
-        let parsed = host.withCString { inet_pton(AF_INET6, $0, &addr) == 1 }
-        guard parsed else { return false }
-        return withUnsafeBytes(of: &addr) { rawBytes in
-            let bytes = rawBytes.bindMemory(to: UInt8.self)
-            let isV6Loopback = bytes[0..<15].allSatisfy { $0 == 0 } && bytes[15] == 1
-            if isV6Loopback { return true }
-
-            let isMappedV4 = bytes[0..<10].allSatisfy { $0 == 0 } && bytes[10] == 0xFF && bytes[11] == 0xFF
-            return isMappedV4 && bytes[12] == 127
-        }
     }
 
     /// Two gateways can share host:port behind a reverse proxy and differ only by route,

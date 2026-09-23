@@ -62,34 +62,38 @@ public struct GatewayConnectDeepLink: Codable, Sendable, Equatable {
     }
 
     /// Parse a device-pair setup code (base64url-encoded JSON: `{url, bootstrapToken?, token?, password?}`).
+    /// Also the shape minted by the provisioning gateway-pairing endpoint
+    /// (`GET /api/provision/gateway`, `status: "ready"` → `setup_code`) after a
+    /// profile-QR claim: same minter, same encoding, so no separate parser is needed.
     public static func fromSetupCode(_ code: String) -> GatewayConnectDeepLink? {
         guard let data = decodeBase64Url(code) else { return nil }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        guard let urlString = json["url"] as? String,
-              let parsed = URLComponents(string: urlString),
+        guard let urlString = json["url"] as? String else { return nil }
+        guard let parsed = URLComponents(string: urlString),
               let hostname = parsed.host, !hostname.isEmpty
         else { return nil }
 
         let scheme = (parsed.scheme ?? "ws").lowercased()
         guard scheme == "ws" || scheme == "wss" else { return nil }
         let tls = scheme == "wss"
-        if !tls, !LoopbackHost.isLoopbackHost(hostname) {
+        // Mirrors the server's own gate for what it will mint into a setup code
+        // (src/pairing/setup-code.ts: isMobilePairingCleartextAllowedHost), which allows
+        // cleartext ws for the whole private LAN when `gateway.bind=lan`, not just loopback.
+        // Restricting this to isLoopbackHost() silently rejected every LAN-bound pairing QR.
+        if !tls, !LoopbackHost.isLocalNetworkHost(hostname) {
             return nil
         }
         let normalizedPath = self.normalizePath(parsed.path)
         guard normalizedPath != .invalid else { return nil }
         let port = parsed.port ?? (tls ? 443 : 18789)
-        let bootstrapToken = json["bootstrapToken"] as? String
-        let token = json["token"] as? String
-        let password = json["password"] as? String
         return GatewayConnectDeepLink(
             host: hostname,
             port: port,
             tls: tls,
             path: normalizedPath.value,
-            bootstrapToken: bootstrapToken,
-            token: token,
-            password: password)
+            bootstrapToken: json["bootstrapToken"] as? String,
+            token: json["token"] as? String,
+            password: json["password"] as? String)
     }
 
     private static func decodeBase64Url(_ input: String) -> Data? {
@@ -178,7 +182,8 @@ public enum DeepLinkParser {
             }
             let port = query["port"].flatMap { Int($0) } ?? 18789
             let tls = (query["tls"] as NSString?)?.boolValue ?? false
-            if !tls, !LoopbackHost.isLoopbackHost(hostParam) {
+            // Same LAN allowance as GatewayConnectDeepLink.fromSetupCode above.
+            if !tls, !LoopbackHost.isLocalNetworkHost(hostParam) {
                 return nil
             }
             let normalizedPath = GatewayConnectDeepLink.normalizePath(query["path"])
