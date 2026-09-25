@@ -4,6 +4,7 @@
 
 Maintenance update for the current Iànua development release.
 
+- Chat now opens on the last message instead of at the top of the history, on first open and on every channel switch (build 10).
 - Iànua Realtime now opens its session as soon as the voice screen appears instead of waiting for the microphone tap: the token mint and the OpenAI connection, about 2.3 seconds, are paid while you are still looking at the screen (build 10). The anticipated session never turns the microphone on early, expires on its own if unused, and is not reopened every time you switch apps.
 - Iànua Realtime now shows a visible loading indicator while connecting and only reports itself as ready once the realtime session actually exists (build 9).
 - Fixed the Iànua chat clearing itself after sending a message: the conversation now stays put instead of blanking out (build 9).
