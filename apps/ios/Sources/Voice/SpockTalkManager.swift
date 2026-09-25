@@ -398,7 +398,11 @@ final class SpockTalkManager {
 
     private func handleEngineConfigurationChange() {
         guard self.isActive else { return }
-        guard Date() >= self.ignoreAudioConfigurationChangesUntil else { return }
+        // La finestra di silenzio esiste solo per non inseguire le
+        // configuration-change che la costruzione del grafo emette di suo. Se
+        // però il motore è FERMO quella notifica non è un'eco: è la sessione
+        // muta, e va riparata anche dentro la finestra.
+        if Date() < self.ignoreAudioConfigurationChangesUntil, self.audio.isRunning { return }
         self.logger.info("audio engine configuration change; rebuilding graph")
         WADDeviceLog.shared.log("talk.audio", "config change → rebuild grafo")
         self.scheduleAudioGraphRebuild(context: "cambio uscita audio")
@@ -712,8 +716,19 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
     private var micMuted = false
     private let tapLifecycle = SpockTalkAudioTapLifecycle()
     private var voiceProcessingEnabled = false
+    /// Alzato dall'unico avvio che accende il voice processing, così
+    /// `settleEngineAfterStart` verifica il motore solo quando serve.
+    private var voiceProcessingJustEnabled = false
     private var micSender: SpockMicSender?
     private var playbackFormat: AVAudioFormat?
+
+    /// Il motore gira davvero? `engine.start()` può tornare senza errori e
+    /// lasciarlo fermo (vedi `settleEngineAfterStart`).
+    var isRunning: Bool { self.engine.isRunning }
+
+    /// Quanti tentativi di ricostruzione dopo il riavvio a vuoto del motore.
+    private static let engineSettleAttempts = 5
+    private static let engineSettleDelay: TimeInterval = 0.15
 
     func start(
         webSocket: URLSessionWebSocketTask?,
@@ -723,6 +738,61 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
         try await self.run {
             try self.startSessionLocked()
             try self.startGraphLocked(webSocket: webSocket, onLevel: onLevel, onSpeechLevel: onSpeechLevel)
+        }
+        try await self.settleEngineAfterStart(
+            webSocket: webSocket,
+            onLevel: onLevel,
+            onSpeechLevel: onSpeechLevel)
+    }
+
+    /// Perché il primo ingresso nella schermata voce non funzionava e il
+    /// secondo sì.
+    ///
+    /// `setVoiceProcessingEnabled(true)` si esegue una sola volta per processo
+    /// (`voiceProcessingEnabled` è sticky e `teardown()` non lo azzera, come
+    /// deve essere: riaccenderlo a ogni sessione ripeterebbe il problema). Ma
+    /// accenderlo porta il bus di input da 2 canali a 1, e un cambio di canali
+    /// fa riconfigurare AURemoteIO: il motore si FERMA da solo ~100 ms **dopo**
+    /// che `engine.start()` è già tornato senza errori, e posta
+    /// `AVAudioEngineConfigurationChange`. Il grafo sembra sano, `startAudio()`
+    /// riporta successo, il WebSocket si apre e la vista dice «Ti ascolto», ma
+    /// non arriva un solo buffer di microfono e nulla suona. Al secondo
+    /// ingresso il voice processing è già attivo: niente si riconfigura e tutto
+    /// funziona.
+    ///
+    /// Misurato nel simulatore: ciclo 1 con toggle → 0 buffer in 2,5 s e
+    /// `isRunning == false`; cicli 2 e 3 → 25 buffer. Aspettare dopo il toggle
+    /// NON basta (la riconfigurazione arriva comunque dopo l'avvio): il grafo
+    /// va ricostruito, ed è quello che fa questo metodo.
+    private func settleEngineAfterStart(
+        webSocket: URLSessionWebSocketTask?,
+        onLevel: @escaping @Sendable (Float) -> Void,
+        onSpeechLevel: @escaping @Sendable (Float) -> Void) async throws
+    {
+        guard self.consumeVoiceProcessingReset() else { return }
+        for _ in 0..<Self.engineSettleAttempts {
+            try? await Task.sleep(for: .seconds(Self.engineSettleDelay))
+            if self.engine.isRunning { return }
+            try await self.run {
+                self.detachGraphLocked()
+                try? AVAudioSession.sharedInstance().setActive(true)
+                try self.startGraphLocked(webSocket: webSocket, onLevel: onLevel, onSpeechLevel: onSpeechLevel)
+            }
+        }
+        try? await Task.sleep(for: .seconds(Self.engineSettleDelay))
+        guard self.engine.isRunning else {
+            throw NSError(
+                domain: "SpockTalk",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "motore audio non avviato"])
+        }
+    }
+
+    private func consumeVoiceProcessingReset() -> Bool {
+        self.queue.sync {
+            let value = self.voiceProcessingJustEnabled
+            self.voiceProcessingJustEnabled = false
+            return value
         }
     }
 
@@ -886,6 +956,10 @@ private final class SpockTalkAudioPipeline: @unchecked Sendable {
             do {
                 try input.setVoiceProcessingEnabled(true)
                 self.voiceProcessingEnabled = true
+                // Accendere il voice processing cambia i canali del bus di
+                // input: la riconfigurazione fermerà il motore subito dopo
+                // l'avvio. Vedi `settleEngineAfterStart`.
+                self.voiceProcessingJustEnabled = true
             } catch {
                 // Unsupported (e.g. simulator): degrade to no AEC rather than fail.
             }
