@@ -900,6 +900,12 @@ private struct IanuaChannelRow: View {
     }
 }
 
+private struct IanuaScrollMetrics: Equatable {
+    let offset: CGFloat
+    let container: CGFloat
+    let content: CGFloat
+}
+
 private struct IanuaThreadView: View {
     let channel: IanuaChannel
     @EnvironmentObject private var model: IanuaChatModel
@@ -925,7 +931,10 @@ private struct IanuaThreadView: View {
     @State private var loadSeq = 0
     @State private var appliedLoadSeq = 0
     @State private var atBottom = true
+    @State private var didInitialScroll = false
     @State private var scrollAfterSend = false
+    @State private var scrollPosition = ScrollPosition()
+    @State private var lastContentHeight: CGFloat = 0
     @StateObject private var voiceRecorder = WADVoiceRecorder()
 
     private var isAgentChannel: Bool {
@@ -986,56 +995,75 @@ private struct IanuaThreadView: View {
     }
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(self.messages) { message in
-                        IanuaMessageBubbleView(message: message, isMine: self.isMine(message))
-                            .id(message.id)
-                            .contextMenu { self.messageMenu(message) }
-                    }
-                    if self.typing, self.isAgentChannel {
-                        WADTypingIndicatorView(agentName: self.channel.name, status: self.typingStep)
-                            .id(-1)
-                    }
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(self.messages) { message in
+                    IanuaMessageBubbleView(message: message, isMine: self.isMine(message))
+                        .id(message.id)
+                        .contextMenu { self.messageMenu(message) }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                if self.typing, self.isAgentChannel {
+                    WADTypingIndicatorView(agentName: self.channel.name, status: self.typingStep)
+                        .id(-1)
+                }
             }
-            // L'ancora di default mette lo ScrollView già in fondo al primo
-            // layout utile (compreso il caricamento async iniziale), invece
-            // di affidarsi solo a scrollTo su un id che nella LazyVStack
-            // potrebbe non essere ancora stato disegnato: quel caso limite è
-            // proprio quello che rompeva l'apertura a freddo di ogni chat.
-            // Solo `.initialOffset`: estesa ai cambi di dimensione riporterebbe
-            // in fondo anche chi sta leggendo la cronologia, scavalcando la
-            // guardia `atBottom` qui sotto.
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            // Il conteggio non distingue "arrivato un messaggio" da "ne è
-            // sparito uno": l'ultimo id sì. E l'auto-scroll parte solo se si
-            // sta già leggendo in fondo, altrimenti chi scorre la cronologia
-            // veniva trascinato giù a ogni poll.
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height
-                    >= geometry.contentSize.height - 40
-            } action: { _, isAtBottom in
-                self.atBottom = isAtBottom
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        // La posizione è pilotata dallo stato: con questo binding attivo uno
+        // `ScrollViewReader.scrollTo` viene ignorato, quindi ogni spostamento
+        // passa da qui.
+        .scrollPosition(self.$scrollPosition)
+        // Al primo layout `messages` è ancora vuoto (arriva da
+        // `load(initial:)`), quindi un'ancora iniziale non ha contenuto su cui
+        // agire: il posizionamento va rifatto sul primo lotto non vuoto. E va
+        // fatto per bordo, non per id, perché nella LazyVStack la riga finale
+        // spesso non è ancora disegnata e lo spostamento per id atterra corto:
+        // era questo a lasciare la chat in cima.
+        .onChange(of: self.messages.isEmpty, initial: true) { _, isEmpty in
+            guard !isEmpty, !self.didInitialScroll else { return }
+            self.didInitialScroll = true
+            self.scrollAfterSend = false
+            self.atBottom = true
+            self.scrollPosition.scrollTo(edge: .bottom)
+        }
+        // `atBottom` deve descrivere dove sta leggendo l'utente, e va aggiornato
+        // solo quando è l'utente a muoversi. Quando invece cresce il contenuto,
+        // la geometria dichiara "non sei più in fondo" prima che parta
+        // l'auto-scroll: aggiornarlo lì spegneva l'inseguimento al primo
+        // messaggio in arrivo, e da quel momento la chat non scendeva più.
+        // Prima del posizionamento iniziale la geometria va ignorata del tutto.
+        .onScrollGeometryChange(for: IanuaScrollMetrics.self) { geometry in
+            IanuaScrollMetrics(
+                offset: geometry.contentOffset.y,
+                container: geometry.containerSize.height,
+                content: geometry.contentSize.height)
+        } action: { _, metrics in
+            guard self.didInitialScroll else { return }
+            guard metrics.content == self.lastContentHeight else {
+                self.lastContentHeight = metrics.content
+                return
             }
-            .onChange(of: self.messages.last?.id) { _, last in
-                guard let last else { return }
-                guard self.atBottom || self.scrollAfterSend else { return }
-                self.scrollAfterSend = false
-                withAnimation { proxy.scrollTo(last, anchor: .bottom) }
-            }
-            .onChange(of: self.typing) { _, isTyping in
-                guard isTyping, self.atBottom else { return }
-                withAnimation { proxy.scrollTo(-1, anchor: .bottom) }
-            }
-            .onChange(of: self.scrollTarget) { _, target in
-                guard let target else { return }
-                withAnimation { proxy.scrollTo(target, anchor: .center) }
-                self.scrollTarget = nil
-            }
+            self.atBottom = metrics.offset + metrics.container >= metrics.content - 40
+        }
+        // Il conteggio non distingue "arrivato un messaggio" da "ne è sparito
+        // uno": l'ultimo id sì. E l'auto-scroll parte solo se si sta già
+        // leggendo in fondo, altrimenti chi scorre la cronologia veniva
+        // trascinato giù a ogni poll.
+        .onChange(of: self.messages.last?.id) { _, last in
+            guard let last else { return }
+            guard self.atBottom || self.scrollAfterSend else { return }
+            self.scrollAfterSend = false
+            withAnimation { self.scrollPosition.scrollTo(id: last, anchor: .bottom) }
+        }
+        .onChange(of: self.typing) { _, isTyping in
+            guard isTyping, self.atBottom else { return }
+            withAnimation { self.scrollPosition.scrollTo(id: -1, anchor: .bottom) }
+        }
+        .onChange(of: self.scrollTarget) { _, target in
+            guard let target else { return }
+            withAnimation { self.scrollPosition.scrollTo(id: target, anchor: .center) }
+            self.scrollTarget = nil
         }
     }
 
