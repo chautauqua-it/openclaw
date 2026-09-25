@@ -240,7 +240,21 @@ final class SpockTalkManager {
 
         // Un anticipo in volo va atteso, mai duplicato: toccare mentre il conio
         // è a metà deve prendere quella sessione, non aprirne una seconda.
-        if let inFlight = self.prewarmTask { await inFlight.value }
+        // L'attesa però è a scadenza: `requestMint` vale 12s e
+        // `receiveFirstEvent` altri 20, quindi un anticipo lento o destinato a
+        // fallire terrebbe la schermata voce su "connessione" mezzo minuto
+        // prima ancora di cominciare. Oltre il budget l'anticipo viene
+        // annullato — si chiude da solo — e si va a freddo.
+        if let inFlight = self.prewarmTask {
+            let deadline = Task {
+                try? await Task.sleep(for: .seconds(Self.prewarmAdoptionBudget))
+                guard !Task.isCancelled else { return }
+                inFlight.cancel()
+                WADDeviceLog.shared.log("talk.perf", "anticipo troppo lento: si procede a freddo")
+            }
+            await inFlight.value
+            deadline.cancel()
+        }
         let prepared = self.consumePreparedSession()
 
         async let permissionGranted = Self.requestMicPermission()
@@ -364,6 +378,10 @@ final class SpockTalkManager {
     /// Un socket fermo viene chiuso dal NAT cellulare molto prima dei 4 minuti.
     private static let preparedSessionPingInterval: TimeInterval = 45
     private static let prewarmRetryDelay: TimeInterval = 300
+    /// Quanto `connect` accetta di aspettare un anticipo non ancora pronto
+    /// prima di lasciarlo perdere. Tenuto sotto la via a freddo (~2.5s): oltre,
+    /// aspettare è sempre peggio che rifare.
+    private static let prewarmAdoptionBudget: TimeInterval = 2
     /// Ogni ritorno in primo piano scarta l'anticipo e ne riaprirebbe un altro:
     /// alternare le app costerebbe un conio e una sessione OpenAI a ogni giro.
     private static let prewarmSessionCooldown: TimeInterval = 60
@@ -418,7 +436,11 @@ final class SpockTalkManager {
             WADDeviceLog.shared.log("talk.perf", "anticipo saltato: \(error.message)")
             return nil
         } catch {
-            self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            // Annullato da `connect` perché arrivato tardi: non è un guasto del
+            // servizio e non deve spegnere l'anticipo per i 5 minuti dopo.
+            if !Task.isCancelled {
+                self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
+            }
             return nil
         }
         guard mint.ok, let secret = mint.clientSecret, let wsRaw = mint.wsUrl, let wsURL = URL(string: wsRaw) else {
@@ -435,6 +457,7 @@ final class SpockTalkManager {
         // senza attenderlo si anticiperebbe un socket che potrebbe non aprirsi.
         guard let first = await Self.receiveFirstEvent(socket, timeout: 20) else {
             socket.cancel(with: .abnormalClosure, reason: nil)
+            guard !Task.isCancelled else { return nil }
             self.prewarmRetryAfter = Date().addingTimeInterval(Self.prewarmRetryDelay)
             WADDeviceLog.shared.log("talk.perf", "anticipo fallito: nessun evento dalla sessione")
             return nil
