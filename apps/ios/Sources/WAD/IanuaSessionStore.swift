@@ -14,6 +14,13 @@ enum IanuaSessionStore {
     private static let account = "cookies-v1"
     private static let cookieDomain = "ianua.differen.it"
     private static let cookieNames = ["ianua_session", "ianua_members"]
+    /// Identità del dispositivo, non una credenziale: il server la usa per
+    /// chiudere la sessione precedente di QUESTO telefono invece di
+    /// affiancarne una nuova. Va rispecchiata nel Keychain come le altre, ma
+    /// deve sopravvivere al logout: azzerarla farebbe ripartire da capo il
+    /// conteggio dei dispositivi a ogni 401, che è il difetto da evitare.
+    private static let deviceCookieName = "ianua_device"
+    private static var mirroredCookieNames: [String] { self.cookieNames + [self.deviceCookieName] }
 
     static let expiredMessage = "Sessione scaduta. Apri Chat ed esegui nuovamente il login."
 
@@ -31,21 +38,9 @@ enum IanuaSessionStore {
     @discardableResult
     static func persistCurrent() -> Bool {
         let jar = HTTPCookieStorage.shared
-        let stored: [StoredCookie] = (jar.cookies ?? [])
-            .filter { self.cookieNames.contains($0.name) && $0.domain.contains(self.cookieDomain) }
-            .map {
-                StoredCookie(
-                    name: $0.name,
-                    value: $0.value,
-                    domain: $0.domain,
-                    path: $0.path.isEmpty ? "/" : $0.path,
-                    expiresEpoch: $0.expiresDate?.timeIntervalSince1970,
-                    isSecure: $0.isSecure)
-            }
-        guard !stored.isEmpty,
-              let data = try? JSONEncoder().encode(stored),
-              let raw = String(data: data, encoding: .utf8)
-        else { return false }
+        let stored = (jar.cookies ?? [])
+            .filter { self.mirroredCookieNames.contains($0.name) && $0.domain.contains(self.cookieDomain) }
+        guard !stored.isEmpty, let raw = self.encode(stored) else { return false }
         return KeychainStore.saveString(raw, service: self.service, account: self.account)
     }
 
@@ -55,8 +50,19 @@ enum IanuaSessionStore {
         let jar = HTTPCookieStorage.shared
         let present = (jar.cookies ?? [])
             .contains { $0.name == "ianua_session" && $0.domain.contains(self.cookieDomain) }
-        if present { return }
-        for cookie in self.loadValidCookies() { jar.setCookie(cookie) }
+        let stored = self.loadValidCookies()
+        // L'identità del dispositivo va rimessa anche a sessione presente: dopo
+        // un logout resta solo lei nel Keychain, ed è il login successivo a
+        // doverla ritrovare per non contare un telefono nuovo.
+        if present {
+            if !(jar.cookies ?? []).contains(where: { $0.name == self.deviceCookieName }),
+               let device = stored.first(where: { $0.name == self.deviceCookieName })
+            {
+                jar.setCookie(device)
+            }
+            return
+        }
+        for cookie in stored { jar.setCookie(cookie) }
     }
 
     /// True se nel Keychain c'è una sessione non scaduta da ripristinare.
@@ -68,11 +74,32 @@ enum IanuaSessionStore {
     /// server ha già revocato il token: lasciarlo nel cookie jar farebbe
     /// continuare Chat, Telefono e Realtime a inviarlo fino al prossimo login.
     static func clear() {
-        KeychainStore.delete(service: self.service, account: self.account)
         let jar = HTTPCookieStorage.shared
+        let device = (jar.cookies ?? []).first {
+            $0.name == self.deviceCookieName && $0.domain.contains(self.cookieDomain)
+        } ?? self.loadValidCookies().first { $0.name == self.deviceCookieName }
+        if let device, let raw = self.encode([device]) {
+            _ = KeychainStore.saveString(raw, service: self.service, account: self.account)
+        } else {
+            _ = KeychainStore.delete(service: self.service, account: self.account)
+        }
         (jar.cookies ?? [])
             .filter { self.cookieNames.contains($0.name) && $0.domain.contains(self.cookieDomain) }
             .forEach(jar.deleteCookie)
+    }
+
+    private static func encode(_ cookies: [HTTPCookie]) -> String? {
+        let stored = cookies.map {
+            StoredCookie(
+                name: $0.name,
+                value: $0.value,
+                domain: $0.domain,
+                path: $0.path.isEmpty ? "/" : $0.path,
+                expiresEpoch: $0.expiresDate?.timeIntervalSince1970,
+                isSecure: $0.isSecure)
+        }
+        guard let data = try? JSONEncoder().encode(stored) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func loadValidCookies() -> [HTTPCookie] {
