@@ -387,6 +387,26 @@ private actor IanuaChatAPI {
     @Published var busy = false
     @Published var memberships: [IanuaMembership]?
 
+    /// Badge azzerati subito alla lettura, in attesa della verità del server.
+    /// Il poll dei badge gira ogni 20s: senza questo, chi apre un canale e
+    /// torna all'elenco vede il pallino dei non letti ancora lì per mezzo
+    /// minuto. La soppressione non è permanente né basata sul conteggio (il
+    /// payload dà un numero, non gli id): vale fino al primo `reload()` PARTITO
+    /// dopo la marcatura, che per costruzione riflette già il letto. Così un
+    /// messaggio arrivato nel frattempo ricompare al giro successivo e il badge
+    /// non può restare spento per sempre.
+    @Published private(set) var readMarks: [String: Int] = [:]
+    private var readSeq = 0
+
+    func noteRead(channel: String) {
+        self.readSeq += 1
+        self.readMarks[channel] = self.readSeq
+    }
+
+    func unread(_ channel: IanuaChannel) -> Int {
+        self.readMarks[channel.id] == nil ? (channel.unread ?? 0) : 0
+    }
+
     var myUserId: Int? {
         self.payload?.me?.userId
     }
@@ -471,8 +491,10 @@ private actor IanuaChatAPI {
 
     @discardableResult
     func reload() async -> ReloadResult {
+        let seqAtStart = self.readSeq
         do {
             self.payload = try await IanuaChatAPI.shared.channels()
+            self.readMarks = self.readMarks.filter { $0.value > seqAtStart }
             self.error = nil
             // Arricchimento non bloccante: se /api/op/chat/layout fallisce o
             // risponde male la chat resta un elenco piatto alfabetico, senza
@@ -798,7 +820,7 @@ private struct IanuaChannelListView: View {
         channels: [IanuaChannel],
         @ViewBuilder content: () -> some View) -> some View
     {
-        let unread = channels.reduce(0) { $0 + ($1.unread ?? 0) }
+        let unread = channels.reduce(0) { $0 + self.model.unread($1) }
         return Section {
             if !collapsed.wrappedValue {
                 content()
@@ -830,7 +852,7 @@ private struct IanuaChannelListView: View {
 
     private func row(_ channel: IanuaChannel, icon: String) -> some View {
         NavigationLink(value: channel) {
-            IanuaChannelRow(channel: channel, icon: icon)
+            IanuaChannelRow(channel: channel, icon: icon, unread: self.model.unread(channel))
         }
     }
 
@@ -852,10 +874,9 @@ private struct IanuaChannelListView: View {
 private struct IanuaChannelRow: View {
     let channel: IanuaChannel
     let icon: String
-
-    private var unread: Int {
-        self.channel.unread ?? 0
-    }
+    /// Conteggio effettivo deciso dal model: il campo del payload da solo
+    /// ignorerebbe l'azzeramento locale alla lettura.
+    let unread: Int
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1336,8 +1357,7 @@ private struct IanuaThreadView: View {
             self.typing = snapshot.typing
             self.typingStep = snapshot.typingStep ?? ""
             if self.scenePhase == .active, let last = snapshot.messages.last?.id, last > self.lastReadId {
-                self.lastReadId = last
-                try? await IanuaChatAPI.shared.markRead(channel: self.channel.id, id: last)
+                await self.markRead(upTo: last)
             }
             self.error = nil
         } catch {
@@ -1345,6 +1365,23 @@ private struct IanuaThreadView: View {
                 self.error = (error as? LocalizedError)?.errorDescription ?? "Errore"
             }
         }
+    }
+
+    /// `lastReadId` avanza solo a marcatura riuscita: se la rete cade, il giro
+    /// successivo (3s) riprova invece di dare per letto un messaggio che il
+    /// server non ha mai registrato. L'ordine poi conta: prima si spegne il
+    /// badge (`noteRead`), solo dopo si chiede la verità al server — un reload
+    /// partito PRIMA della marcatura riporterebbe il conteggio vecchio e il
+    /// pallino dei non letti tornerebbe a comparire.
+    private func markRead(upTo last: Int) async {
+        do {
+            try await IanuaChatAPI.shared.markRead(channel: self.channel.id, id: last)
+        } catch {
+            return
+        }
+        self.lastReadId = last
+        self.model.noteRead(channel: self.channel.id)
+        await self.model.reload()
     }
 
     private func startPolling() {
